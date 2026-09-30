@@ -39,3 +39,15 @@ test("moves a card between columns", async ({ page }) => {
   await page.mouse.up();
   await expect(targetColumn.getByTestId("card-card-1")).toBeVisible();
 });
+
+test("applies AI chat board update", async ({ page }) => {
+  await page.goto("/");
+
+  await page.getByLabel("Chat input").fill("rename backlog to Planning");
+  await page.getByRole("button", { name: /^send$/i }).click();
+
+  await expect(page.getByText("Updated backlog title to Planning.")).toBeVisible();
+  await expect(
+    page.getByTestId("column-col-backlog").getByLabel("Column title")
+  ).toHaveValue("Planning");
+});

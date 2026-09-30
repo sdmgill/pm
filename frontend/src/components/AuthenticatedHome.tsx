@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { AIChatSidebar, type AIChatMessage } from "@/components/AIChatSidebar";
 import { KanbanBoard } from "@/components/KanbanBoard";
 import { initialData, type BoardData } from "@/lib/kanban";
 
@@ -10,6 +11,15 @@ type AuthMeResponse = {
 };
 
 type BoardApiResponse = {
+  board: BoardData;
+  version: number;
+  updated_at: string;
+};
+
+type AIChatResponse = {
+  model: string;
+  assistant_message: string;
+  board_updated: boolean;
   board: BoardData;
   version: number;
   updated_at: string;
@@ -27,6 +37,15 @@ export const AuthenticatedHome = () => {
   const [boardLoadError, setBoardLoadError] = useState<string | null>(null);
   const [isBoardLoading, setIsBoardLoading] = useState(false);
   const [isBoardSaving, setIsBoardSaving] = useState(false);
+  const [chatMessages, setChatMessages] = useState<AIChatMessage[]>([
+    {
+      role: "assistant",
+      content:
+        "Hi, I can explain your board or update it when you ask. Example: rename backlog to Planning.",
+    },
+  ]);
+  const [chatError, setChatError] = useState<string | null>(null);
+  const [isChatSending, setIsChatSending] = useState(false);
   const boardVersionRef = useRef<number | null>(null);
 
   const applyBoardSnapshot = useCallback((snapshot: BoardApiResponse) => {
@@ -127,15 +146,26 @@ export const AuthenticatedHome = () => {
     setBoardLoadError(null);
     setIsBoardLoading(false);
     setIsBoardSaving(false);
+    setChatError(null);
+    setIsChatSending(false);
+    setChatMessages([
+      {
+        role: "assistant",
+        content:
+          "Hi, I can explain your board or update it when you ask. Example: rename backlog to Planning.",
+      },
+    ]);
   };
 
   const handleBoardChange = async (nextBoard: BoardData) => {
     setBoard(nextBoard);
 
-    const expectedVersion = boardVersionRef.current;
-    if (expectedVersion === null && fallbackToLocalDemo) {
+    if (fallbackToLocalDemo) {
+      boardVersionRef.current = (boardVersionRef.current ?? 0) + 1;
       return;
     }
+
+    const expectedVersion = boardVersionRef.current;
 
     setIsBoardSaving(true);
     setBoardLoadError(null);
@@ -165,6 +195,84 @@ export const AuthenticatedHome = () => {
       }
     } finally {
       setIsBoardSaving(false);
+    }
+  };
+
+  const handleSendChat = async (message: string) => {
+    setChatError(null);
+    setIsChatSending(true);
+    const nextMessages = [...chatMessages, { role: "user" as const, content: message }];
+    setChatMessages(nextMessages);
+
+    try {
+      if (fallbackToLocalDemo) {
+        let assistantMessage = "Got it. No board updates needed for that request.";
+        let boardUpdated = false;
+
+        if (board) {
+          const match = message.match(/rename\s+backlog\s+to\s+(.+)/i);
+          if (match) {
+            const nextTitle = match[1].trim();
+            const localUpdatedBoard: BoardData = {
+              ...board,
+              columns: board.columns.map((column) =>
+                column.id === "col-backlog" ? { ...column, title: nextTitle } : column
+              ),
+            };
+            setBoard(localUpdatedBoard);
+            boardVersionRef.current = (boardVersionRef.current ?? 0) + 1;
+            boardUpdated = true;
+            assistantMessage = `Updated backlog title to ${nextTitle}.`;
+          }
+        }
+
+        setChatMessages([
+          ...nextMessages,
+          {
+            role: "assistant",
+            content: boardUpdated
+              ? `${assistantMessage} I applied the board update.`
+              : assistantMessage,
+          },
+        ]);
+        return;
+      }
+
+      const response = await fetch("/api/ai/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_message: message,
+          conversation_history: chatMessages,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Unable to reach AI service");
+      }
+
+      const payload = (await response.json()) as AIChatResponse;
+      applyBoardSnapshot({
+        board: payload.board,
+        version: payload.version,
+        updated_at: payload.updated_at,
+      });
+
+      const updateSuffix = payload.board_updated
+        ? " I applied the board update automatically."
+        : "";
+
+      setChatMessages([
+        ...nextMessages,
+        {
+          role: "assistant",
+          content: `${payload.assistant_message}${updateSuffix}`,
+        },
+      ]);
+    } catch {
+      setChatError("AI request failed. Please try again.");
+    } finally {
+      setIsChatSending(false);
     }
   };
 
@@ -262,7 +370,15 @@ export const AuthenticatedHome = () => {
           <p className="text-sm text-[var(--gray-text)]">Loading board...</p>
         </main>
       ) : (
-        <KanbanBoard board={board} onBoardChange={handleBoardChange} />
+        <>
+          <KanbanBoard board={board} onBoardChange={handleBoardChange} />
+          <AIChatSidebar
+            messages={chatMessages}
+            onSend={handleSendChat}
+            isSending={isChatSending}
+            error={chatError}
+          />
+        </>
       )}
     </>
   );

@@ -5,7 +5,7 @@ This plan is implementation-first and optimized for MVP speed, correctness, and 
 ## Global decisions (locked)
 
 - AI provider scope for MVP: OpenAI only.
-- Model configuration: `AI_MODEL` env var, default `GPT-5.3-Codex` for local development.
+- Model configuration: `AI_MODEL` env var, default `gpt-5.3-codex` for local development.
 - Container strategy: multi-stage build, one final runtime image.
 - Auth strategy for MVP: server-validated, httpOnly signed cookie session.
 - Data strategy for MVP: one board JSON snapshot per user in SQLite.
@@ -149,9 +149,9 @@ This plan is implementation-first and optimized for MVP speed, correctness, and 
 
 ### Checklist
 
-- [ ] Add backend AI client using OpenAI API and env-based model selection.
-- [ ] Require `OPENAI_API_KEY`; read `AI_MODEL` with local default `GPT-5.3-Codex`.
-- [ ] Implement AI connectivity endpoint/service for a simple prompt.
+- [x] Add backend AI client using OpenAI API and env-based model selection.
+- [x] Require `OPENAI_API_KEY`; read `AI_MODEL` with local default `gpt-5.3-codex`.
+- [x] Implement AI connectivity endpoint/service for a simple prompt.
 
 ### Tests
 
@@ -166,10 +166,10 @@ This plan is implementation-first and optimized for MVP speed, correctness, and 
 
 ### Checklist
 
-- [ ] Define strict JSON schema for AI response payload.
-- [ ] Send board JSON + user message + chat history to AI.
-- [ ] Validate response strictly before applying any board updates.
-- [ ] Apply board update only when schema-valid and semantically safe.
+- [x] Define strict JSON schema for AI response payload.
+- [x] Send board JSON + user message + chat history to AI.
+- [x] Validate response strictly before applying any board updates.
+- [x] Apply board update only when schema-valid and semantically safe.
 
 ### Tests
 
@@ -184,10 +184,10 @@ This plan is implementation-first and optimized for MVP speed, correctness, and 
 
 ### Checklist
 
-- [ ] Add sidebar chat UI in frontend.
-- [ ] Show conversation history per current session.
-- [ ] Submit prompts to backend AI endpoint.
-- [ ] Auto-apply validated board updates and refresh board state.
+- [x] Add sidebar chat UI in frontend.
+- [x] Show conversation history per current session.
+- [x] Submit prompts to backend AI endpoint.
+- [x] Auto-apply validated board updates and refresh board state.
 
 ### Tests
 
