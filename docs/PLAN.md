@@ -1,37 +1,199 @@
-# High level steps for project
+# Project Plan and Execution Checklist
 
-Part 1: Plan
+This plan is implementation-first and optimized for MVP speed, correctness, and low rework.
 
-Enrich this document to plan out each of these parts in detail, with substeps listed out as a checklist to be checked off by the agent, and with tests and success critieria for each. Also create an AGENTS.md file inside the frontend directory that describes the existing code there. Ensure the user checks and approves the plan.
+## Global decisions (locked)
 
-Part 2: Scaffolding
+- AI provider scope for MVP: OpenAI only.
+- Model configuration: `AI_MODEL` env var, default `GPT-5.3-Codex` for local development.
+- Container strategy: multi-stage build, one final runtime image.
+- Auth strategy for MVP: server-validated, httpOnly signed cookie session.
+- Data strategy for MVP: one board JSON snapshot per user in SQLite.
+- API style for MVP: board-level endpoints first (`GET` board, `PUT` board).
+- AI safety behavior: strict schema validation; invalid AI output never mutates board.
+- AI test strategy: mocked responses by default, optional real-key smoke test behind env flag.
 
-Set up the Docker infrastructure, the backend in backend/ with FastAPI, and write the start and stop scripts in the scripts/ directory. This should serve example static HTML to confirm that a 'hello world' example works running locally and also make an API call.
+## Part 1: Plan
 
-Part 3: Add in Frontend
+### Checklist
 
-Now update so that the frontend is statically built and served, so that the app has the demo Kanban board displayed at /. Comprehensive unit and integration tests.
+- [x] Define all parts from scaffold through AI chat.
+- [x] Lock architecture and delivery decisions for MVP.
+- [x] Add `frontend/AGENTS.md` describing existing frontend structure and conventions.
+- [x] Get user approval on plan decisions.
 
-Part 4: Add in a fake user sign in experience
+### Tests
 
-Now update so that on first hitting /, you need to log in with dummy credentials ("user", "password") in order to see the Kanban, and you can log out. Comprehensive tests.
+- Manual review of this document with user sign-off.
 
-Part 5: Database modeling
+### Success criteria
 
-Now propose a database schema for the Kanban, saving it as JSON. Document the database approach in docs/ and get user sign off.
+- Plan is specific enough that each part can be implemented without ambiguous scope.
 
-Part 6: Backend
+## Part 2: Scaffolding
 
-Now add API routes to allow the backend to read and change the Kanban for a given user; test this thoroughly with backend unit tests. The database should be created if it doesn't exist.
+### Checklist
 
-Part 7: Frontend + Backend
+- [x] Create backend FastAPI app scaffold in `backend/`.
+- [x] Add `/health` API endpoint.
+- [x] Add root route serving a temporary static hello-world page.
+- [x] Add Python dependency management with `uv` in container build.
+- [x] Add root Dockerfile multi-stage build.
+- [x] Add compose config for local run.
+- [x] Add start and stop scripts for Mac, Linux, and Windows in `scripts/`.
 
-Now have the frontend actually use the backend API, so that the app is a proper persistent Kanban board. Test very throughly.
+### Tests
 
-Part 8: AI connectivity
+- Build image successfully.
+- Start container and verify root route returns hello-world HTML.
+- Verify `/health` returns JSON success payload.
 
-Now allow the backend to make an AI call via OpenRouter. Test connectivity with a simple "2+2" test and ensure the AI call is working.
+### Success criteria
 
-Part 9: Now extend the backend call so that it always calls the AI with the JSON of the Kanban board, plus the user's question (and conversation history). The AI should respond with Structured Outputs that includes the response to the user and optionaly an update to the Kanban. Test thoroughly.
+- `scripts/start-*` launches app locally in container.
+- `scripts/stop-*` stops and removes running app container(s).
 
-Part 10: Now add a beautiful sidebar widget to the UI supporting full AI chat, and allowing the LLM (as it determines) to update the Kanban based on its Structured Outputs. If the AI updates the Kanban, then the UI should refresh automatically.
+## Part 3: Add in Frontend
+
+### Checklist
+
+- [x] Build existing NextJS frontend as static assets.
+- [x] Serve built frontend at `/` via FastAPI.
+- [x] Preserve API routes under `/api/*` (or configured backend prefix).
+- [x] Ensure frontend assets are copied into final container image.
+
+### Tests
+
+- Run frontend unit tests and e2e smoke tests.
+- Start container and verify Kanban UI appears at `/`.
+
+### Success criteria
+
+- Frontend renders from backend-served static build inside container.
+
+## Part 4: Fake user sign in experience
+
+### Checklist
+
+- [x] Add `/auth/login` and `/auth/logout` backend routes.
+- [x] Validate fixed credentials (`user` / `password`).
+- [x] Set and clear signed httpOnly session cookie.
+- [x] Gate board APIs behind authenticated session.
+- [x] Add frontend login page/flow and logout action.
+
+### Tests
+
+- Backend tests for login success/failure and cookie behavior.
+- Frontend tests for redirect/login/logout flow.
+
+### Success criteria
+
+- Unauthenticated user cannot access board data APIs.
+- Authenticated user can access board and can log out.
+
+## Part 5: Database modeling
+
+### Checklist
+
+- [x] Create SQLite DB initialization on startup if missing.
+- [x] Create `users` table (future-proof multi-user).
+- [x] Create `boards` table with JSON payload per user.
+- [x] Include `updated_at` and integer `version` fields for safe updates.
+- [x] Document schema and rationale in `docs/`.
+
+### Tests
+
+- DB init test for empty startup.
+- CRUD tests for read/write board snapshot.
+
+### Success criteria
+
+- Board persists across restarts for each user.
+
+## Part 6: Backend API
+
+### Checklist
+
+- [x] Implement `GET` board endpoint.
+- [x] Implement `PUT` board endpoint.
+- [x] Validate request/response schemas.
+- [x] Enforce auth/session checks.
+
+### Tests
+
+- Unit tests for handlers and service layer.
+- Integration tests against SQLite test database.
+
+### Success criteria
+
+- API supports full board read/replace round-trip reliably.
+
+## Part 7: Frontend + Backend integration
+
+### Checklist
+
+- [x] Replace frontend local-only state bootstrapping with API load.
+- [x] Persist board edits via backend API.
+- [x] Add loading/error states for API calls.
+
+### Tests
+
+- Integration tests for edit and refresh persistence.
+- E2E flow validating data survives reload.
+
+### Success criteria
+
+- User interactions update persisted board state in backend DB.
+
+## Part 8: AI connectivity
+
+### Checklist
+
+- [ ] Add backend AI client using OpenAI API and env-based model selection.
+- [ ] Require `OPENAI_API_KEY`; read `AI_MODEL` with local default `GPT-5.3-Codex`.
+- [ ] Implement AI connectivity endpoint/service for a simple prompt.
+
+### Tests
+
+- Mocked unit test for AI client request/response.
+- Optional smoke test (`RUN_OPENAI_SMOKE=1`) verifying `2+2` response path with real key.
+
+### Success criteria
+
+- Backend can complete an AI call and return parsed text safely.
+
+## Part 9: AI + Kanban structured outputs
+
+### Checklist
+
+- [ ] Define strict JSON schema for AI response payload.
+- [ ] Send board JSON + user message + chat history to AI.
+- [ ] Validate response strictly before applying any board updates.
+- [ ] Apply board update only when schema-valid and semantically safe.
+
+### Tests
+
+- Tests for valid structured output updating board.
+- Tests for invalid output being rejected with no board mutation.
+
+### Success criteria
+
+- AI can respond conversationally and optionally produce valid board updates.
+
+## Part 10: AI chat sidebar UI
+
+### Checklist
+
+- [ ] Add sidebar chat UI in frontend.
+- [ ] Show conversation history per current session.
+- [ ] Submit prompts to backend AI endpoint.
+- [ ] Auto-apply validated board updates and refresh board state.
+
+### Tests
+
+- Component tests for chat render/send/error states.
+- E2E test for chat-triggered board update flow.
+
+### Success criteria
+
+- User can chat with AI and see board refresh when valid updates are returned.
