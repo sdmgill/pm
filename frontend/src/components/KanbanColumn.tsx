@@ -11,6 +11,9 @@ type KanbanColumnProps = {
   onRename: (columnId: string, title: string) => void;
   onAddCard: (columnId: string, title: string, details: string) => void;
   onDeleteCard: (columnId: string, cardId: string) => void;
+  isCelebrating?: boolean;
+  celebratedCardId?: string | null;
+  reducedMotion?: boolean;
 };
 
 export const KanbanColumn = ({
@@ -19,6 +22,9 @@ export const KanbanColumn = ({
   onRename,
   onAddCard,
   onDeleteCard,
+  isCelebrating = false,
+  celebratedCardId = null,
+  reducedMotion = false,
 }: KanbanColumnProps) => {
   const { setNodeRef, isOver } = useDroppable({ id: column.id });
 
@@ -27,9 +33,12 @@ export const KanbanColumn = ({
       ref={setNodeRef}
       className={clsx(
         "flex min-h-[520px] flex-col rounded-3xl border border-[var(--stroke)] bg-[var(--surface-strong)] p-4 shadow-[var(--shadow)] transition",
-        isOver && "ring-2 ring-[var(--accent-yellow)]"
+        isOver && "ring-2 ring-[var(--accent-yellow)]",
+        isCelebrating && !reducedMotion && "done-column-celebrate",
+        isCelebrating && reducedMotion && "done-column-highlight"
       )}
       data-testid={`column-${column.id}`}
+      data-celebrating={isCelebrating ? "true" : "false"}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="w-full">
@@ -54,6 +63,8 @@ export const KanbanColumn = ({
               key={card.id}
               card={card}
               onDelete={(cardId) => onDeleteCard(column.id, cardId)}
+              isCelebrating={card.id === celebratedCardId}
+              reducedMotion={reducedMotion}
             />
           ))}
         </SortableContext>

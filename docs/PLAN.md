@@ -197,3 +197,27 @@ This plan is implementation-first and optimized for MVP speed, correctness, and 
 ### Success criteria
 
 - User can chat with AI and see board refresh when valid updates are returned.
+
+## Part 11: Done celebration animation
+
+### Checklist
+
+- [x] Trigger celebration when a card is moved into Done from a non-Done column.
+- [x] Add a brief pulse effect on the Done column and newly completed card.
+- [x] Add a short confetti burst tied to the drop action.
+- [x] Keep animation duration brief and non-blocking for board interactions.
+- [x] Add a cooldown so rapid multi-card moves do not spam confetti.
+- [x] Respect reduced-motion preferences with a minimal non-motion fallback.
+
+### Tests
+
+- Unit tests for trigger rules: fires on non-Done -> Done, does not fire for Done -> Done.
+- Component tests for pulse/confetti visibility and automatic cleanup.
+- E2E test moving a card to Done and asserting celebration marker appears.
+- E2E check that rapid repeated moves are throttled by cooldown.
+
+### Success criteria
+
+- Moving a card into Done produces a clear but brief pulse + confetti celebration.
+- Celebration does not block drag/drop or card editing interactions.
+- Reduced-motion users receive a subtle fallback without motion-heavy effects.

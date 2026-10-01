@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -13,7 +13,48 @@ import {
 } from "@dnd-kit/core";
 import { KanbanColumn } from "@/components/KanbanColumn";
 import { KanbanCardPreview } from "@/components/KanbanCardPreview";
-import { createId, initialData, moveCard, type BoardData } from "@/lib/kanban";
+import {
+  createId,
+  initialData,
+  isCelebrationCooldownElapsed,
+  moveCard,
+  resolveMoveColumnIds,
+  shouldCelebrateDoneMove,
+  type BoardData,
+} from "@/lib/kanban";
+
+const DONE_COLUMN_ID = "col-done";
+const CELEBRATION_COOLDOWN_MS = 2200;
+const CELEBRATION_VISIBLE_MS = 1000;
+
+type ConfettiPiece = {
+  id: string;
+  dx: number;
+  dy: number;
+  rotation: number;
+  delay: number;
+  color: string;
+};
+
+type CelebrationState = {
+  cardId: string;
+  originX: number;
+  originY: number;
+  pieces: ConfettiPiece[];
+};
+
+const confettiColors = ["#ecad0a", "#209dd7", "#753991", "#032147"];
+
+const buildConfettiPieces = (): ConfettiPiece[] => {
+  return Array.from({ length: 18 }, (_, index) => ({
+    id: `piece-${index}`,
+    dx: (Math.random() - 0.5) * 240,
+    dy: 130 + Math.random() * 90,
+    rotation: Math.random() * 360,
+    delay: Math.random() * 140,
+    color: confettiColors[index % confettiColors.length],
+  }));
+};
 
 type KanbanBoardProps = {
   board?: BoardData;
@@ -23,6 +64,11 @@ type KanbanBoardProps = {
 export const KanbanBoard = ({ board, onBoardChange }: KanbanBoardProps) => {
   const [localBoard, setLocalBoard] = useState<BoardData>(() => initialData);
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
+  const [celebration, setCelebration] = useState<CelebrationState | null>(null);
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+  const boardRegionRef = useRef<HTMLDivElement | null>(null);
+  const celebrationTimeoutRef = useRef<number | null>(null);
+  const lastCelebrationAtRef = useRef(0);
 
   const currentBoard = board ?? localBoard;
 
@@ -41,6 +87,89 @@ export const KanbanBoard = ({ board, onBoardChange }: KanbanBoardProps) => {
 
   const cardsById = useMemo(() => currentBoard.cards, [currentBoard.cards]);
 
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return;
+    }
+
+    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const applyPreference = () => setPrefersReducedMotion(media.matches);
+    applyPreference();
+
+    media.addEventListener?.("change", applyPreference);
+    return () => {
+      media.removeEventListener?.("change", applyPreference);
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (celebrationTimeoutRef.current !== null) {
+        window.clearTimeout(celebrationTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const getCelebrationOrigin = (event: DragEndEvent, toColumnId: string) => {
+    const boardRect = boardRegionRef.current?.getBoundingClientRect();
+    if (!boardRect) {
+      return { x: 160, y: 120 };
+    }
+
+    const translated = event.active.rect.current.translated;
+    if (translated) {
+      const x = translated.left + translated.width / 2 - boardRect.left;
+      const y = translated.top + translated.height / 2 - boardRect.top;
+      return { x, y };
+    }
+
+    const targetColumn = boardRegionRef.current?.querySelector(
+      `[data-testid=\"column-${toColumnId}\"]`
+    ) as HTMLElement | null;
+    if (targetColumn) {
+      const rect = targetColumn.getBoundingClientRect();
+      return {
+        x: rect.left + rect.width / 2 - boardRect.left,
+        y: rect.top + 84 - boardRect.top,
+      };
+    }
+
+    return { x: boardRect.width - 180, y: 130 };
+  };
+
+  const triggerDoneCelebration = (
+    event: DragEndEvent,
+    cardId: string,
+    toColumnId: string
+  ) => {
+    const now = Date.now();
+    if (
+      !isCelebrationCooldownElapsed(
+        lastCelebrationAtRef.current,
+        now,
+        CELEBRATION_COOLDOWN_MS
+      )
+    ) {
+      return;
+    }
+    lastCelebrationAtRef.current = now;
+
+    const origin = getCelebrationOrigin(event, toColumnId);
+    setCelebration({
+      cardId,
+      originX: origin.x,
+      originY: origin.y,
+      pieces: prefersReducedMotion ? [] : buildConfettiPieces(),
+    });
+
+    if (celebrationTimeoutRef.current !== null) {
+      window.clearTimeout(celebrationTimeoutRef.current);
+    }
+    celebrationTimeoutRef.current = window.setTimeout(() => {
+      setCelebration(null);
+    }, CELEBRATION_VISIBLE_MS);
+  };
+
   const handleDragStart = (event: DragStartEvent) => {
     setActiveCardId(event.active.id as string);
   };
@@ -53,11 +182,21 @@ export const KanbanBoard = ({ board, onBoardChange }: KanbanBoardProps) => {
       return;
     }
 
+    const { fromColumnId, toColumnId } = resolveMoveColumnIds(
+      currentBoard.columns,
+      active.id as string,
+      over.id as string
+    );
+
     const nextBoard = {
       ...currentBoard,
       columns: moveCard(currentBoard.columns, active.id as string, over.id as string),
     };
     updateBoard(nextBoard);
+
+    if (shouldCelebrateDoneMove(fromColumnId, toColumnId, DONE_COLUMN_ID)) {
+      triggerDoneCelebration(event, active.id as string, toColumnId as string);
+    }
   };
 
   const handleRenameColumn = (columnId: string, title: string) => {
@@ -106,6 +245,7 @@ export const KanbanBoard = ({ board, onBoardChange }: KanbanBoardProps) => {
   };
 
   const activeCard = activeCardId ? cardsById[activeCardId] : null;
+  const isDoneCelebrating = Boolean(celebration);
 
   return (
     <div className="relative overflow-hidden">
@@ -149,32 +289,57 @@ export const KanbanBoard = ({ board, onBoardChange }: KanbanBoardProps) => {
           </div>
         </header>
 
-        <DndContext
-          sensors={sensors}
-          collisionDetection={closestCorners}
-          onDragStart={handleDragStart}
-          onDragEnd={handleDragEnd}
-        >
-          <section className="grid gap-6 lg:grid-cols-5">
-            {currentBoard.columns.map((column) => (
-              <KanbanColumn
-                key={column.id}
-                column={column}
-                cards={column.cardIds.map((cardId) => currentBoard.cards[cardId])}
-                onRename={handleRenameColumn}
-                onAddCard={handleAddCard}
-                onDeleteCard={handleDeleteCard}
-              />
-            ))}
-          </section>
-          <DragOverlay>
-            {activeCard ? (
-              <div className="w-[260px]">
-                <KanbanCardPreview card={activeCard} />
-              </div>
-            ) : null}
-          </DragOverlay>
-        </DndContext>
+        <div ref={boardRegionRef} className="relative">
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCorners}
+            onDragStart={handleDragStart}
+            onDragEnd={handleDragEnd}
+          >
+            <section className="grid gap-6 lg:grid-cols-5">
+              {currentBoard.columns.map((column) => (
+                <KanbanColumn
+                  key={column.id}
+                  column={column}
+                  cards={column.cardIds.map((cardId) => currentBoard.cards[cardId])}
+                  onRename={handleRenameColumn}
+                  onAddCard={handleAddCard}
+                  onDeleteCard={handleDeleteCard}
+                  isCelebrating={isDoneCelebrating && column.id === DONE_COLUMN_ID}
+                  celebratedCardId={
+                    isDoneCelebrating && column.id === DONE_COLUMN_ID
+                      ? celebration?.cardId ?? null
+                      : null
+                  }
+                  reducedMotion={prefersReducedMotion}
+                />
+              ))}
+            </section>
+            <DragOverlay>
+              {activeCard ? (
+                <div className="w-[260px]">
+                  <KanbanCardPreview card={activeCard} />
+                </div>
+              ) : null}
+            </DragOverlay>
+          </DndContext>
+          {celebration && !prefersReducedMotion ? (
+            <div className="celebration-layer" data-testid="done-confetti">
+              {celebration.pieces.map((piece) => {
+                const style = {
+                  left: `${celebration.originX}px`,
+                  top: `${celebration.originY}px`,
+                  "--dx": `${piece.dx}px`,
+                  "--dy": `${piece.dy}px`,
+                  "--rot": `${piece.rotation}deg`,
+                  "--delay": `${piece.delay}ms`,
+                  "--color": piece.color,
+                } as CSSProperties;
+                return <span key={piece.id} className="confetti-piece" style={style} />;
+              })}
+            </div>
+          ) : null}
+        </div>
       </main>
     </div>
   );

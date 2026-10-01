@@ -81,6 +81,36 @@ const findColumnId = (columns: Column[], id: string) => {
   return columns.find((column) => column.cardIds.includes(id))?.id;
 };
 
+export const resolveMoveColumnIds = (
+  columns: Column[],
+  activeId: string,
+  overId: string
+) => {
+  return {
+    fromColumnId: findColumnId(columns, activeId) ?? null,
+    toColumnId: findColumnId(columns, overId) ?? null,
+  };
+};
+
+export const shouldCelebrateDoneMove = (
+  fromColumnId: string | null,
+  toColumnId: string | null,
+  doneColumnId = "col-done"
+) => {
+  if (!fromColumnId || !toColumnId) {
+    return false;
+  }
+  return fromColumnId !== doneColumnId && toColumnId === doneColumnId;
+};
+
+export const isCelebrationCooldownElapsed = (
+  lastCelebrationAt: number,
+  now: number,
+  cooldownMs = 2200
+) => {
+  return now - lastCelebrationAt >= cooldownMs;
+};
+
 export const moveCard = (
   columns: Column[],
   activeId: string,
