@@ -25,33 +25,39 @@ import {
 
 const DONE_COLUMN_ID = "col-done";
 const CELEBRATION_COOLDOWN_MS = 2200;
-const CELEBRATION_VISIBLE_MS = 1000;
+const CELEBRATION_VISIBLE_MS = 3100;
 
 type ConfettiPiece = {
   id: string;
-  dx: number;
-  dy: number;
+  leftVw: number;
+  driftX: number;
+  fallVh: number;
   rotation: number;
   delay: number;
+  durationMs: number;
   color: string;
 };
 
 type CelebrationState = {
   cardId: string;
-  originX: number;
-  originY: number;
   pieces: ConfettiPiece[];
 };
 
 const confettiColors = ["#ecad0a", "#209dd7", "#753991", "#032147"];
 
-const buildConfettiPieces = (): ConfettiPiece[] => {
-  return Array.from({ length: 18 }, (_, index) => ({
+const clamp = (value: number, min: number, max: number) => {
+  return Math.min(Math.max(value, min), max);
+};
+
+const buildConfettiPieces = (centerVw: number): ConfettiPiece[] => {
+  return Array.from({ length: 42 }, (_, index) => ({
     id: `piece-${index}`,
-    dx: (Math.random() - 0.5) * 240,
-    dy: 130 + Math.random() * 90,
+    leftVw: clamp(centerVw + (Math.random() - 0.5) * 32, 8, 92),
+    driftX: (Math.random() - 0.5) * 120,
+    fallVh: 72 + Math.random() * 24,
     rotation: Math.random() * 360,
-    delay: Math.random() * 140,
+    delay: Math.random() * 340,
+    durationMs: 2200 + Math.random() * 500,
     color: confettiColors[index % confettiColors.length],
   }));
 };
@@ -110,38 +116,19 @@ export const KanbanBoard = ({ board, onBoardChange }: KanbanBoardProps) => {
     };
   }, []);
 
-  const getCelebrationOrigin = (event: DragEndEvent, toColumnId: string) => {
-    const boardRect = boardRegionRef.current?.getBoundingClientRect();
-    if (!boardRect) {
-      return { x: 160, y: 120 };
-    }
-
-    const translated = event.active.rect.current.translated;
-    if (translated) {
-      const x = translated.left + translated.width / 2 - boardRect.left;
-      const y = translated.top + translated.height / 2 - boardRect.top;
-      return { x, y };
-    }
-
-    const targetColumn = boardRegionRef.current?.querySelector(
-      `[data-testid=\"column-${toColumnId}\"]`
+  const getDoneColumnCenterVw = () => {
+    const doneColumn = boardRegionRef.current?.querySelector(
+      `[data-testid=\"column-${DONE_COLUMN_ID}\"]`
     ) as HTMLElement | null;
-    if (targetColumn) {
-      const rect = targetColumn.getBoundingClientRect();
-      return {
-        x: rect.left + rect.width / 2 - boardRect.left,
-        y: rect.top + 84 - boardRect.top,
-      };
+    if (!doneColumn || typeof window === "undefined") {
+      return 70;
     }
 
-    return { x: boardRect.width - 180, y: 130 };
+    const rect = doneColumn.getBoundingClientRect();
+    return clamp(((rect.left + rect.width / 2) / window.innerWidth) * 100, 12, 88);
   };
 
-  const triggerDoneCelebration = (
-    event: DragEndEvent,
-    cardId: string,
-    toColumnId: string
-  ) => {
+  const triggerDoneCelebration = (cardId: string) => {
     const now = Date.now();
     if (
       !isCelebrationCooldownElapsed(
@@ -153,13 +140,11 @@ export const KanbanBoard = ({ board, onBoardChange }: KanbanBoardProps) => {
       return;
     }
     lastCelebrationAtRef.current = now;
+    const centerVw = getDoneColumnCenterVw();
 
-    const origin = getCelebrationOrigin(event, toColumnId);
     setCelebration({
       cardId,
-      originX: origin.x,
-      originY: origin.y,
-      pieces: prefersReducedMotion ? [] : buildConfettiPieces(),
+      pieces: prefersReducedMotion ? [] : buildConfettiPieces(centerVw),
     });
 
     if (celebrationTimeoutRef.current !== null) {
@@ -195,7 +180,7 @@ export const KanbanBoard = ({ board, onBoardChange }: KanbanBoardProps) => {
     updateBoard(nextBoard);
 
     if (shouldCelebrateDoneMove(fromColumnId, toColumnId, DONE_COLUMN_ID)) {
-      triggerDoneCelebration(event, active.id as string, toColumnId as string);
+      triggerDoneCelebration(active.id as string);
     }
   };
 
@@ -327,12 +312,13 @@ export const KanbanBoard = ({ board, onBoardChange }: KanbanBoardProps) => {
             <div className="celebration-layer" data-testid="done-confetti">
               {celebration.pieces.map((piece) => {
                 const style = {
-                  left: `${celebration.originX}px`,
-                  top: `${celebration.originY}px`,
-                  "--dx": `${piece.dx}px`,
-                  "--dy": `${piece.dy}px`,
+                  left: `${piece.leftVw}vw`,
+                  top: "-16px",
+                  "--drift-x": `${piece.driftX}px`,
+                  "--fall-y": `${piece.fallVh}vh`,
                   "--rot": `${piece.rotation}deg`,
                   "--delay": `${piece.delay}ms`,
+                  "--duration": `${piece.durationMs}ms`,
                   "--color": piece.color,
                 } as CSSProperties;
                 return <span key={piece.id} className="confetti-piece" style={style} />;
