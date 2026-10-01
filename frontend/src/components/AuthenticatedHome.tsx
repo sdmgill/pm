@@ -370,15 +370,17 @@ export const AuthenticatedHome = () => {
           <p className="text-sm text-[var(--gray-text)]">Loading board...</p>
         </main>
       ) : (
-        <>
-          <KanbanBoard board={board} onBoardChange={handleBoardChange} />
+        <div className="lg:flex lg:items-start lg:gap-4">
+          <div className="min-w-0 flex-1">
+            <KanbanBoard board={board} onBoardChange={handleBoardChange} />
+          </div>
           <AIChatSidebar
             messages={chatMessages}
             onSend={handleSendChat}
             isSending={isChatSending}
             error={chatError}
           />
-        </>
+        </div>
       )}
     </>
   );

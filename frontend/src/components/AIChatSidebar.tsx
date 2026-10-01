@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, KeyboardEvent, useState } from "react";
 
 export type AIChatMessage = {
   role: "user" | "assistant";
@@ -23,8 +23,7 @@ export const AIChatSidebar = ({
   const [draft, setDraft] = useState("");
   const [isOpen, setIsOpen] = useState(false);
 
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const sendDraft = async () => {
     const message = draft.trim();
     if (!message || isSending) {
       return;
@@ -32,6 +31,20 @@ export const AIChatSidebar = ({
 
     setDraft("");
     await onSend(message);
+  };
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    await sendDraft();
+  };
+
+  const handleTextareaKeyDown = async (
+    event: KeyboardEvent<HTMLTextAreaElement>
+  ) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      await sendDraft();
+    }
   };
 
   return (
@@ -48,7 +61,7 @@ export const AIChatSidebar = ({
         className={[
           "fixed right-0 top-0 z-30 h-screen w-full max-w-[380px] border-l border-[var(--stroke)] bg-white/95 shadow-[var(--shadow)] backdrop-blur transition-transform duration-200",
           isOpen ? "translate-x-0" : "translate-x-full",
-          "lg:top-[65px] lg:h-[calc(100vh-65px)] lg:translate-x-0",
+          "lg:sticky lg:top-[82px] lg:z-10 lg:mr-4 lg:mt-12 lg:h-[calc(100vh-110px)] lg:w-[360px] lg:max-w-none lg:flex-shrink-0 lg:translate-x-0 lg:rounded-[28px] lg:border lg:bg-white lg:shadow-[var(--shadow)]",
         ].join(" ")}
       >
         <div className="flex h-full flex-col">
@@ -95,6 +108,7 @@ export const AIChatSidebar = ({
               placeholder="Try: rename backlog to Planning"
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={handleTextareaKeyDown}
               disabled={isSending}
             />
             {error ? <p className="mt-2 text-xs text-red-700">{error}</p> : null}

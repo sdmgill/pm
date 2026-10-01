@@ -39,4 +39,43 @@ describe("AIChatSidebar", () => {
 
     expect(onSend).toHaveBeenCalledWith("Rename backlog to Planning");
   });
+
+  it("submits on Enter", async () => {
+    const onSend = vi.fn(async () => undefined);
+
+    render(
+      <AIChatSidebar
+        messages={messages}
+        onSend={onSend}
+        isSending={false}
+        error={null}
+      />
+    );
+
+    const input = screen.getByLabelText(/chat input/i);
+    await userEvent.type(input, "Rename backlog to Ideas");
+    await userEvent.type(input, "{enter}");
+
+    expect(onSend).toHaveBeenCalledWith("Rename backlog to Ideas");
+  });
+
+  it("keeps newline on Shift+Enter", async () => {
+    const onSend = vi.fn(async () => undefined);
+
+    render(
+      <AIChatSidebar
+        messages={messages}
+        onSend={onSend}
+        isSending={false}
+        error={null}
+      />
+    );
+
+    const input = screen.getByLabelText(/chat input/i);
+    await userEvent.type(input, "Line one");
+    await userEvent.type(input, "{shift>}{enter}{/shift}");
+
+    expect(onSend).not.toHaveBeenCalled();
+    expect(input).toHaveValue("Line one\n");
+  });
 });

@@ -6,8 +6,9 @@ from pathlib import Path
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Response
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
+from app import ai
 from app import db
 
 app = FastAPI(title="PM MVP Backend")
@@ -50,6 +51,36 @@ class BoardResponse(BaseModel):
 class UpdateBoardRequest(BaseModel):
   board: BoardModel
   expected_version: int | None = None
+
+
+class AIConnectivityResponse(BaseModel):
+  model: str
+  prompt: str
+  answer: str
+
+
+class ConversationMessage(BaseModel):
+  role: str
+  content: str
+
+
+class AIChatRequest(BaseModel):
+  user_message: str
+  conversation_history: list[ConversationMessage] = []
+
+
+class AIChatStructuredOutput(BaseModel):
+  assistant_message: str
+  board_update: BoardModel | None = None
+
+
+class AIChatResponse(BaseModel):
+  model: str
+  assistant_message: str
+  board_updated: bool
+  board: BoardModel
+  version: int
+  updated_at: str
 
 
 def _sign_value(value: str) -> str:
@@ -167,6 +198,79 @@ def update_board(
     "board": board_data,
     "version": write_result["version"],
     "updated_at": write_result["updated_at"],
+  }
+
+
+@app.get("/api/ai/connectivity", response_model=AIConnectivityResponse)
+def ai_connectivity_check(
+  username: str = Depends(_require_authenticated_user),
+) -> dict[str, str]:
+  _ = username
+
+  try:
+    return ai.run_connectivity_check("2+2")
+  except ai.AIConfigurationError as exc:
+    raise HTTPException(status_code=503, detail=str(exc)) from exc
+  except Exception as exc:
+    raise HTTPException(status_code=502, detail=f"AI connectivity failed: {exc}") from exc
+
+
+@app.post("/api/ai/chat", response_model=AIChatResponse)
+def ai_chat(
+  payload: AIChatRequest,
+  username: str = Depends(_require_authenticated_user),
+) -> dict[str, object]:
+  user_id = db.ensure_user(DB_PATH, username)
+  db.ensure_board(DB_PATH, user_id)
+
+  snapshot = db.get_board_snapshot(DB_PATH, user_id)
+  if not snapshot:
+    raise HTTPException(status_code=500, detail="Board data is unavailable")
+
+  history_payload = [message.model_dump(mode="json") for message in payload.conversation_history]
+
+  try:
+    ai_result = ai.run_kanban_assistant(
+      board=snapshot["board"],
+      user_message=payload.user_message,
+      conversation_history=history_payload,
+    )
+    structured = AIChatStructuredOutput.model_validate(ai_result)
+  except ai.AIConfigurationError as exc:
+    raise HTTPException(status_code=503, detail=str(exc)) from exc
+  except (ai.AIResponseFormatError, ValidationError) as exc:
+    raise HTTPException(status_code=502, detail=f"Invalid AI structured output: {exc}") from exc
+  except Exception as exc:
+    raise HTTPException(status_code=502, detail=f"AI chat failed: {exc}") from exc
+
+  board_payload = snapshot["board"]
+  version = int(snapshot["version"])
+  updated_at = str(snapshot["updated_at"])
+  board_updated = False
+
+  if structured.board_update is not None:
+    board_payload = structured.board_update.model_dump(mode="json")
+    try:
+      write_result = db.save_board_snapshot(
+        DB_PATH,
+        user_id,
+        board_payload,
+        expected_version=version,
+      )
+    except ValueError as exc:
+      raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    version = int(write_result["version"])
+    updated_at = str(write_result["updated_at"])
+    board_updated = True
+
+  return {
+    "model": str(ai_result.get("model", ai.get_ai_model())),
+    "assistant_message": structured.assistant_message,
+    "board_updated": board_updated,
+    "board": board_payload,
+    "version": version,
+    "updated_at": updated_at,
   }
 
 

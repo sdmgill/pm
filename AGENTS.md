@@ -24,7 +24,7 @@ For the MVP, this will run locally (in a docker container)
 - Everything packaged into a Docker container
 - Use "uv" as the package manager for python in the Docker container
 - Use OpenAI directly for AI calls. Configure OPENAI_API_KEY in a .env file in the project root
-- Configure the model via AI_MODEL (default to GPT-5.3-Codex for local development)
+- Configure the model via AI_MODEL (default to gpt-5.3-codex for local development)
 - Use SQLLite local database for the database, creating a new db if it doesn't exist
 - Start and Stop server scripts for Mac, PC, Linux in scripts/
 
