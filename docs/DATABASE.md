@@ -1,4 +1,4 @@
-# Database Model (Part 5)
+# Database Model
 
 This MVP uses SQLite with one board JSON snapshot per user.
 
@@ -53,7 +53,8 @@ On backend startup:
 2. Ensure demo user exists (username: user).
 3. Ensure that user has one board row initialized with default board JSON.
 
-## Current scope
+## Access paths
 
-Part 5 includes schema, initialization, and CRUD utility functions in backend code.
-Part 6 will expose board read/write via API endpoints.
+- `GET /api/board` and `PUT /api/board` read and replace the board snapshot.
+- `PUT` must send `expected_version`; a mismatch is rejected with HTTP 409.
+- `POST /api/ai/chat` saves a validated AI board update using the same versioned write.
