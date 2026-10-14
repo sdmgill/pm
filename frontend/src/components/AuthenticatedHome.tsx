@@ -1,273 +1,96 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { AIChatSidebar, type AIChatMessage } from "@/components/AIChatSidebar";
+import { useEffect, useState } from "react";
+import { AIChatSidebar } from "@/components/AIChatSidebar";
 import { KanbanBoard } from "@/components/KanbanBoard";
-import { initialData, type BoardData } from "@/lib/kanban";
+import { LoginForm } from "@/components/LoginForm";
+import { useBoardSync } from "@/hooks/useBoardSync";
+import { api, ApiError, type ChatMessage } from "@/lib/api";
 
-type AuthMeResponse = {
-  authenticated: boolean;
-  user: string | null;
-};
-
-type BoardApiResponse = {
-  board: BoardData;
-  version: number;
-  updated_at: string;
-};
-
-type AIChatResponse = {
-  model: string;
-  assistant_message: string;
-  board_updated: boolean;
-  board: BoardData;
-  version: number;
-  updated_at: string;
-};
-
-const fallbackToLocalDemo = process.env.NEXT_PUBLIC_USE_LOCAL_DEMO_AUTH === "1";
+const initialChatMessages: ChatMessage[] = [
+  {
+    role: "assistant",
+    content:
+      "Hi, I can explain your board or update it when you ask. Example: rename backlog to Planning.",
+  },
+];
 
 export const AuthenticatedHome = () => {
-  const [isLoading, setIsLoading] = useState(true);
+  const [isCheckingSession, setIsCheckingSession] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [username, setUsername] = useState("user");
-  const [password, setPassword] = useState("password");
-  const [board, setBoard] = useState<BoardData | null>(null);
-  const [boardLoadError, setBoardLoadError] = useState<string | null>(null);
-  const [isBoardLoading, setIsBoardLoading] = useState(false);
-  const [isBoardSaving, setIsBoardSaving] = useState(false);
-  const [chatMessages, setChatMessages] = useState<AIChatMessage[]>([
-    {
-      role: "assistant",
-      content:
-        "Hi, I can explain your board or update it when you ask. Example: rename backlog to Planning.",
-    },
-  ]);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>(initialChatMessages);
   const [chatError, setChatError] = useState<string | null>(null);
   const [isChatSending, setIsChatSending] = useState(false);
-  const boardVersionRef = useRef<number | null>(null);
-
-  const applyBoardSnapshot = useCallback((snapshot: BoardApiResponse) => {
-    setBoard(snapshot.board);
-    boardVersionRef.current = snapshot.version;
-  }, []);
-
-  const loadBoard = useCallback(async () => {
-    setBoardLoadError(null);
-    setIsBoardLoading(true);
-
-    try {
-      const response = await fetch("/api/board", { method: "GET" });
-      if (!response.ok) {
-        throw new Error("Unable to load board data");
-      }
-
-      const snapshot = (await response.json()) as BoardApiResponse;
-      applyBoardSnapshot(snapshot);
-    } catch {
-      if (fallbackToLocalDemo) {
-        setBoard(initialData);
-        boardVersionRef.current = 1;
-      } else {
-        setBoardLoadError("Unable to load your board right now.");
-      }
-    } finally {
-      setIsBoardLoading(false);
-    }
-  }, [applyBoardSnapshot]);
+  const boardSync = useBoardSync();
+  const { reload: reloadBoard } = boardSync;
 
   useEffect(() => {
-    const checkAuth = async () => {
+    const checkSession = async () => {
       try {
-        const response = await fetch("/auth/me", { method: "GET" });
-        if (!response.ok) {
-          throw new Error("Unable to validate session");
-        }
-
-        const data = (await response.json()) as AuthMeResponse;
-        setIsAuthenticated(data.authenticated);
+        const session = await api.me();
+        setIsAuthenticated(session.authenticated);
       } catch {
-        if (fallbackToLocalDemo) {
-          setIsAuthenticated(true);
-        } else {
-          setError("Unable to connect to authentication service.");
-        }
+        setAuthError("Unable to connect to authentication service.");
       } finally {
-        setIsLoading(false);
+        setIsCheckingSession(false);
       }
     };
 
-    void checkAuth();
+    void checkSession();
   }, []);
 
   useEffect(() => {
-    if (!isAuthenticated) {
-      return;
+    if (isAuthenticated) {
+      void reloadBoard();
     }
+  }, [isAuthenticated, reloadBoard]);
 
-    void loadBoard();
-  }, [isAuthenticated, loadBoard]);
-
-  const handleLogin = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setError(null);
-
+  const handleLogin = async (username: string, password: string) => {
+    setAuthError(null);
     try {
-      const response = await fetch("/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
-      });
-
-      if (!response.ok) {
-        setError("Invalid username or password.");
-        return;
-      }
-
+      await api.login(username, password);
       setIsAuthenticated(true);
-    } catch {
-      setError("Unable to sign in right now.");
+    } catch (error) {
+      setAuthError(
+        error instanceof ApiError && error.status === 401
+          ? "Invalid username or password."
+          : "Unable to sign in right now."
+      );
     }
   };
 
   const handleLogout = async () => {
-    setError(null);
     try {
-      await fetch("/auth/logout", { method: "POST" });
+      await api.logout();
     } catch {
       // Ignore logout network errors and still clear UI state for safety.
     }
 
     setIsAuthenticated(false);
-    setPassword("password");
-    setBoard(null);
-    boardVersionRef.current = null;
-    setBoardLoadError(null);
-    setIsBoardLoading(false);
-    setIsBoardSaving(false);
+    setAuthError(null);
+    boardSync.reset();
+    setChatMessages(initialChatMessages);
     setChatError(null);
     setIsChatSending(false);
-    setChatMessages([
-      {
-        role: "assistant",
-        content:
-          "Hi, I can explain your board or update it when you ask. Example: rename backlog to Planning.",
-      },
-    ]);
-  };
-
-  const handleBoardChange = async (nextBoard: BoardData) => {
-    setBoard(nextBoard);
-
-    if (fallbackToLocalDemo) {
-      boardVersionRef.current = (boardVersionRef.current ?? 0) + 1;
-      return;
-    }
-
-    const expectedVersion = boardVersionRef.current;
-
-    setIsBoardSaving(true);
-    setBoardLoadError(null);
-
-    try {
-      const response = await fetch("/api/board", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ board: nextBoard, expected_version: expectedVersion }),
-      });
-
-      if (response.status === 409) {
-        setBoardLoadError("Board changed in another session. Reloading latest state.");
-        await loadBoard();
-        return;
-      }
-
-      if (!response.ok) {
-        throw new Error("Unable to save board data");
-      }
-
-      const snapshot = (await response.json()) as BoardApiResponse;
-      applyBoardSnapshot(snapshot);
-    } catch {
-      if (!fallbackToLocalDemo) {
-        setBoardLoadError("Unable to save board right now.");
-      }
-    } finally {
-      setIsBoardSaving(false);
-    }
   };
 
   const handleSendChat = async (message: string) => {
     setChatError(null);
     setIsChatSending(true);
-    const nextMessages = [...chatMessages, { role: "user" as const, content: message }];
+    const nextMessages: ChatMessage[] = [...chatMessages, { role: "user", content: message }];
     setChatMessages(nextMessages);
 
     try {
-      if (fallbackToLocalDemo) {
-        let assistantMessage = "Got it. No board updates needed for that request.";
-        let boardUpdated = false;
-
-        if (board) {
-          const match = message.match(/rename\s+backlog\s+to\s+(.+)/i);
-          if (match) {
-            const nextTitle = match[1].trim();
-            const localUpdatedBoard: BoardData = {
-              ...board,
-              columns: board.columns.map((column) =>
-                column.id === "col-backlog" ? { ...column, title: nextTitle } : column
-              ),
-            };
-            setBoard(localUpdatedBoard);
-            boardVersionRef.current = (boardVersionRef.current ?? 0) + 1;
-            boardUpdated = true;
-            assistantMessage = `Updated backlog title to ${nextTitle}.`;
-          }
-        }
-
-        setChatMessages([
-          ...nextMessages,
-          {
-            role: "assistant",
-            content: boardUpdated
-              ? `${assistantMessage} I applied the board update.`
-              : assistantMessage,
-          },
-        ]);
-        return;
-      }
-
-      const response = await fetch("/api/ai/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          user_message: message,
-          conversation_history: chatMessages,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error("Unable to reach AI service");
-      }
-
-      const payload = (await response.json()) as AIChatResponse;
-      applyBoardSnapshot({
-        board: payload.board,
-        version: payload.version,
-        updated_at: payload.updated_at,
-      });
+      const payload = await api.sendChat(message, chatMessages);
+      boardSync.applySnapshot(payload);
 
       const updateSuffix = payload.board_updated
         ? " I applied the board update automatically."
         : "";
-
       setChatMessages([
         ...nextMessages,
-        {
-          role: "assistant",
-          content: `${payload.assistant_message}${updateSuffix}`,
-        },
+        { role: "assistant", content: `${payload.assistant_message}${updateSuffix}` },
       ]);
     } catch {
       setChatError("AI request failed. Please try again.");
@@ -276,7 +99,7 @@ export const AuthenticatedHome = () => {
     }
   };
 
-  if (isLoading) {
+  if (isCheckingSession) {
     return (
       <main className="mx-auto flex min-h-screen max-w-[640px] items-center justify-center px-6">
         <p className="text-sm text-[var(--gray-text)]">Checking session...</p>
@@ -285,60 +108,10 @@ export const AuthenticatedHome = () => {
   }
 
   if (!isAuthenticated) {
-    return (
-      <main className="mx-auto flex min-h-screen max-w-[640px] items-center justify-center px-6">
-        <section className="w-full rounded-[28px] border border-[var(--stroke)] bg-white p-8 shadow-[var(--shadow)]">
-          <p className="text-xs font-semibold uppercase tracking-[0.35em] text-[var(--gray-text)]">
-            PM MVP
-          </p>
-          <h1 className="mt-3 font-display text-3xl font-semibold text-[var(--navy-dark)]">
-            Sign in
-          </h1>
-          <p className="mt-3 text-sm text-[var(--gray-text)]">
-            Use the demo credentials to access your board.
-          </p>
-
-          <form className="mt-6 space-y-4" onSubmit={handleLogin}>
-            <label className="block text-sm font-medium text-[var(--navy-dark)]" htmlFor="username">
-              Username
-            </label>
-            <input
-              id="username"
-              className="w-full rounded-xl border border-[var(--stroke)] px-4 py-3 text-sm"
-              value={username}
-              onChange={(event) => setUsername(event.target.value)}
-              autoComplete="username"
-            />
-
-            <label className="block text-sm font-medium text-[var(--navy-dark)]" htmlFor="password">
-              Password
-            </label>
-            <input
-              id="password"
-              className="w-full rounded-xl border border-[var(--stroke)] px-4 py-3 text-sm"
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              autoComplete="current-password"
-            />
-
-            {error ? (
-              <p className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                {error}
-              </p>
-            ) : null}
-
-            <button
-              className="w-full rounded-xl bg-[var(--secondary-purple)] px-4 py-3 text-sm font-semibold text-white"
-              type="submit"
-            >
-              Sign in
-            </button>
-          </form>
-        </section>
-      </main>
-    );
+    return <LoginForm onLogin={handleLogin} error={authError} />;
   }
+
+  const { board, isLoading, isSaving, error: boardError } = boardSync;
 
   return (
     <>
@@ -346,15 +119,13 @@ export const AuthenticatedHome = () => {
         <div className="mx-auto flex max-w-[1500px] items-center justify-between px-6 py-3">
           <div>
             <p className="text-sm font-medium text-[var(--navy-dark)]">Signed in as user</p>
-            {isBoardLoading ? (
+            {isLoading ? (
               <p className="text-xs text-[var(--gray-text)]">Loading board...</p>
             ) : null}
-            {isBoardSaving ? (
+            {isSaving ? (
               <p className="text-xs text-[var(--gray-text)]">Saving changes...</p>
             ) : null}
-            {boardLoadError ? (
-              <p className="text-xs text-red-700">{boardLoadError}</p>
-            ) : null}
+            {boardError ? <p className="text-xs text-red-700">{boardError}</p> : null}
           </div>
           <button
             className="rounded-lg border border-[var(--stroke)] px-3 py-2 text-sm font-medium text-[var(--navy-dark)]"
@@ -365,14 +136,14 @@ export const AuthenticatedHome = () => {
           </button>
         </div>
       </header>
-      {isBoardLoading || !board ? (
+      {!board ? (
         <main className="mx-auto flex min-h-[60vh] max-w-[640px] items-center justify-center px-6">
           <p className="text-sm text-[var(--gray-text)]">Loading board...</p>
         </main>
       ) : (
         <div className="lg:flex lg:items-start lg:gap-4">
           <div className="min-w-0 flex-1">
-            <KanbanBoard board={board} onBoardChange={handleBoardChange} />
+            <KanbanBoard board={board} onBoardChange={boardSync.updateBoard} />
           </div>
           <AIChatSidebar
             messages={chatMessages}

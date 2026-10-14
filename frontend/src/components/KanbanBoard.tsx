@@ -211,6 +211,16 @@ export const KanbanBoard = ({ board, onBoardChange }: KanbanBoardProps) => {
     updateBoard(nextBoard);
   };
 
+  const handleEditCard = (cardId: string, title: string, details: string) => {
+    updateBoard({
+      ...currentBoard,
+      cards: {
+        ...currentBoard.cards,
+        [cardId]: { ...currentBoard.cards[cardId], title, details },
+      },
+    });
+  };
+
   const handleDeleteCard = (columnId: string, cardId: string) => {
     const nextBoard = {
       ...currentBoard,
@@ -290,6 +300,7 @@ export const KanbanBoard = ({ board, onBoardChange }: KanbanBoardProps) => {
                   onRename={handleRenameColumn}
                   onAddCard={handleAddCard}
                   onDeleteCard={handleDeleteCard}
+                  onEditCard={handleEditCard}
                   isCelebrating={isDoneCelebrating && column.id === DONE_COLUMN_ID}
                   celebratedCardId={
                     isDoneCelebrating && column.id === DONE_COLUMN_ID

@@ -88,3 +88,92 @@ def test_put_board_rejects_version_conflict(client: TestClient) -> None:
 
     assert response.status_code == 409
     assert "Version mismatch" in response.json()["detail"]
+
+
+def test_put_board_requires_expected_version(client: TestClient) -> None:
+    login(client)
+
+    board = client.get("/api/board").json()["board"]
+    response = client.put("/api/board", json={"board": board})
+
+    assert response.status_code == 422
+
+
+def test_put_board_rejects_stale_version_after_save(client: TestClient) -> None:
+    login(client)
+
+    current = client.get("/api/board").json()
+    first = client.put(
+        "/api/board",
+        json={"board": current["board"], "expected_version": current["version"]},
+    )
+    assert first.status_code == 200
+
+    second = client.put(
+        "/api/board",
+        json={"board": current["board"], "expected_version": current["version"]},
+    )
+    assert second.status_code == 409
+
+
+def test_put_board_rejects_dangling_card_id(client: TestClient) -> None:
+    login(client)
+
+    current = client.get("/api/board").json()
+    board = current["board"]
+    board["columns"][0]["cardIds"].append("card-missing")
+
+    response = client.put(
+        "/api/board",
+        json={"board": board, "expected_version": current["version"]},
+    )
+
+    assert response.status_code == 422
+    assert client.get("/api/board").json()["version"] == current["version"]
+
+
+def test_put_board_rejects_card_in_two_columns(client: TestClient) -> None:
+    login(client)
+
+    current = client.get("/api/board").json()
+    board = current["board"]
+    board["columns"][1]["cardIds"].append(board["columns"][0]["cardIds"][0])
+
+    response = client.put(
+        "/api/board",
+        json={"board": board, "expected_version": current["version"]},
+    )
+
+    assert response.status_code == 422
+
+
+def test_put_board_rejects_orphan_card(client: TestClient) -> None:
+    login(client)
+
+    current = client.get("/api/board").json()
+    board = current["board"]
+    board["cards"]["card-orphan"] = {"id": "card-orphan", "title": "Orphan", "details": ""}
+
+    response = client.put(
+        "/api/board",
+        json={"board": board, "expected_version": current["version"]},
+    )
+
+    assert response.status_code == 422
+
+
+def test_put_board_rejects_column_changes(client: TestClient) -> None:
+    login(client)
+
+    current = client.get("/api/board").json()
+    board = current["board"]
+    removed = board["columns"].pop()
+    board["columns"][0]["cardIds"].extend(removed["cardIds"])
+
+    response = client.put(
+        "/api/board",
+        json={"board": board, "expected_version": current["version"]},
+    )
+
+    assert response.status_code == 422
+    assert "Columns are fixed" in response.json()["detail"]

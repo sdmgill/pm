@@ -11,6 +11,7 @@ type KanbanColumnProps = {
   onRename: (columnId: string, title: string) => void;
   onAddCard: (columnId: string, title: string, details: string) => void;
   onDeleteCard: (columnId: string, cardId: string) => void;
+  onEditCard: (cardId: string, title: string, details: string) => void;
   isCelebrating?: boolean;
   celebratedCardId?: string | null;
   reducedMotion?: boolean;
@@ -22,6 +23,7 @@ export const KanbanColumn = ({
   onRename,
   onAddCard,
   onDeleteCard,
+  onEditCard,
   isCelebrating = false,
   celebratedCardId = null,
   reducedMotion = false,
@@ -63,6 +65,7 @@ export const KanbanColumn = ({
               key={card.id}
               card={card}
               onDelete={(cardId) => onDeleteCard(column.id, cardId)}
+              onEdit={onEditCard}
               isCelebrating={card.id === celebratedCardId}
               reducedMotion={reducedMotion}
             />

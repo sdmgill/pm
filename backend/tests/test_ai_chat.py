@@ -116,3 +116,52 @@ def test_ai_chat_rejects_invalid_structured_output(
 
     assert response.status_code == 502
     assert "Invalid AI structured output" in response.json()["detail"]
+
+
+def test_ai_chat_rejects_dangling_card_id(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    login(client)
+
+    current = client.get("/api/board").json()
+    board = current["board"]
+    board["columns"][0]["cardIds"].append("card-missing")
+
+    def fake_run(**_: object) -> dict[str, object]:
+        return {"model": "test-model", "assistant_message": "Done.", "board_update": board}
+
+    monkeypatch.setattr(main.ai, "run_kanban_assistant", fake_run)
+
+    response = client.post(
+        "/api/ai/chat",
+        json={"user_message": "Add a card", "conversation_history": []},
+    )
+
+    assert response.status_code == 502
+    assert client.get("/api/board").json()["version"] == current["version"]
+
+
+def test_ai_chat_rejects_column_removal(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    login(client)
+
+    current = client.get("/api/board").json()
+    board = current["board"]
+    removed = board["columns"].pop()
+    for card_id in removed["cardIds"]:
+        del board["cards"][card_id]
+
+    def fake_run(**_: object) -> dict[str, object]:
+        return {"model": "test-model", "assistant_message": "Done.", "board_update": board}
+
+    monkeypatch.setattr(main.ai, "run_kanban_assistant", fake_run)
+
+    response = client.post(
+        "/api/ai/chat",
+        json={"user_message": "Remove Done", "conversation_history": []},
+    )
+
+    assert response.status_code == 502
+    assert "Columns are fixed" in response.json()["detail"]
+    assert client.get("/api/board").json()["version"] == current["version"]

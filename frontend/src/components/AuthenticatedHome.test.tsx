@@ -10,11 +10,12 @@ const boardResponse = {
   updated_at: "2026-09-30T00:00:00",
 };
 
-const mockFetch = (responses: Array<{ ok: boolean; body: unknown }>) => {
+const mockFetch = (responses: Array<{ status: number; body: unknown }>) => {
   const fetchMock = vi.fn();
   for (const response of responses) {
     fetchMock.mockResolvedValueOnce({
-      ok: response.ok,
+      ok: response.status < 400,
+      status: response.status,
       json: async () => response.body,
     } as Response);
   }
@@ -32,7 +33,7 @@ describe("AuthenticatedHome", () => {
   });
 
   it("shows login form when not authenticated", async () => {
-    mockFetch([{ ok: true, body: { authenticated: false, user: null } }]);
+    mockFetch([{ status: 200, body: { authenticated: false, user: null } }]);
 
     render(<AuthenticatedHome />);
 
@@ -41,9 +42,9 @@ describe("AuthenticatedHome", () => {
 
   it("logs in with valid credentials and renders board", async () => {
     mockFetch([
-      { ok: true, body: { authenticated: false, user: null } },
-      { ok: true, body: { authenticated: true, user: "user" } },
-      { ok: true, body: boardResponse },
+      { status: 200, body: { authenticated: false, user: null } },
+      { status: 200, body: { authenticated: true, user: "user" } },
+      { status: 200, body: boardResponse },
     ]);
 
     render(<AuthenticatedHome />);
@@ -57,9 +58,9 @@ describe("AuthenticatedHome", () => {
 
   it("logs out to login screen", async () => {
     const fetchMock = mockFetch([
-      { ok: true, body: { authenticated: true, user: "user" } },
-      { ok: true, body: boardResponse },
-      { ok: true, body: { authenticated: false } },
+      { status: 200, body: { authenticated: true, user: "user" } },
+      { status: 200, body: boardResponse },
+      { status: 200, body: { authenticated: false } },
     ]);
 
     render(<AuthenticatedHome />);
@@ -77,8 +78,8 @@ describe("AuthenticatedHome", () => {
 
   it("shows validation error on rejected credentials", async () => {
     mockFetch([
-      { ok: true, body: { authenticated: false, user: null } },
-      { ok: false, body: { detail: "Invalid credentials" } },
+      { status: 200, body: { authenticated: false, user: null } },
+      { status: 401, body: { detail: "Invalid credentials" } },
     ]);
 
     render(<AuthenticatedHome />);

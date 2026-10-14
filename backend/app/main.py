@@ -1,12 +1,13 @@
 import hashlib
 import hmac
 import os
+import time
 from pathlib import Path
 
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Response
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ValidationError, model_validator
 
 from app import ai
 from app import db
@@ -15,7 +16,8 @@ app = FastAPI(title="PM MVP Backend")
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 DB_PATH = Path(os.getenv("DB_PATH", "/data/pm.db"))
 SESSION_COOKIE_NAME = "pm_session"
-SESSION_SECRET = os.getenv("SESSION_SECRET", "local-dev-session-secret")
+SESSION_SECRET = os.getenv("SESSION_SECRET", "")
+SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 VALID_USERNAME = "user"
 VALID_PASSWORD = "password"
 
@@ -41,6 +43,24 @@ class BoardModel(BaseModel):
   columns: list[ColumnModel]
   cards: dict[str, CardModel]
 
+  @model_validator(mode="after")
+  def check_consistency(self) -> "BoardModel":
+    column_ids = [column.id for column in self.columns]
+    if len(set(column_ids)) != len(column_ids):
+      raise ValueError("Column ids must be unique")
+
+    for key, card in self.cards.items():
+      if key != card.id:
+        raise ValueError(f"Card key {key} does not match card id {card.id}")
+
+    placed_card_ids = [card_id for column in self.columns for card_id in column.cardIds]
+    if len(set(placed_card_ids)) != len(placed_card_ids):
+      raise ValueError("Each card must appear in exactly one column")
+    if set(placed_card_ids) != set(self.cards):
+      raise ValueError("Column cardIds must reference exactly the cards in the board")
+
+    return self
+
 
 class BoardResponse(BaseModel):
   board: BoardModel
@@ -50,7 +70,7 @@ class BoardResponse(BaseModel):
 
 class UpdateBoardRequest(BaseModel):
   board: BoardModel
-  expected_version: int | None = None
+  expected_version: int
 
 
 class AIConnectivityResponse(BaseModel):
@@ -90,18 +110,23 @@ def _sign_value(value: str) -> str:
 
 
 def _create_session_cookie(username: str) -> str:
-  signature = _sign_value(username)
-  return f"{username}.{signature}"
+  payload = f"{username}.{int(time.time())}"
+  return f"{payload}.{_sign_value(payload)}"
 
 
 def _get_authenticated_user(cookie_value: str | None) -> str | None:
-  if not cookie_value or "." not in cookie_value:
+  if not cookie_value:
     return None
 
-  username, signature = cookie_value.rsplit(".", 1)
-  expected_signature = _sign_value(username)
+  parts = cookie_value.split(".")
+  if len(parts) != 3:
+    return None
 
-  if not hmac.compare_digest(signature, expected_signature):
+  username, issued_at, signature = parts
+  if not hmac.compare_digest(signature, _sign_value(f"{username}.{issued_at}")):
+    return None
+
+  if not issued_at.isdigit() or time.time() - int(issued_at) > SESSION_MAX_AGE_SECONDS:
     return None
 
   if username != VALID_USERNAME:
@@ -119,8 +144,17 @@ def _require_authenticated_user(
   return username
 
 
+def _require_fixed_columns(current_board: dict[str, object], next_board: BoardModel) -> None:
+  current_ids = [column["id"] for column in current_board["columns"]]
+  next_ids = [column.id for column in next_board.columns]
+  if current_ids != next_ids:
+    raise ValueError("Columns are fixed; only column titles can change")
+
+
 @app.on_event("startup")
 def startup() -> None:
+  if not SESSION_SECRET:
+    raise RuntimeError("SESSION_SECRET must be set")
   db.init_db(DB_PATH)
   user_id = db.ensure_user(DB_PATH, VALID_USERNAME)
   db.ensure_board(DB_PATH, user_id)
@@ -152,6 +186,7 @@ def auth_login(payload: LoginRequest, response: Response) -> dict[str, str | boo
     samesite="lax",
     secure=False,
     path="/",
+    max_age=SESSION_MAX_AGE_SECONDS,
   )
   return {"authenticated": True, "user": payload.username}
 
@@ -181,6 +216,15 @@ def update_board(
 ) -> dict[str, object]:
   user_id = db.ensure_user(DB_PATH, username)
   db.ensure_board(DB_PATH, user_id)
+
+  snapshot = db.get_board_snapshot(DB_PATH, user_id)
+  if not snapshot:
+    raise HTTPException(status_code=500, detail="Board data is unavailable")
+
+  try:
+    _require_fixed_columns(snapshot["board"], payload.board)
+  except ValueError as exc:
+    raise HTTPException(status_code=422, detail=str(exc)) from exc
 
   board_data = payload.board.model_dump(mode="json")
 
@@ -236,9 +280,11 @@ def ai_chat(
       conversation_history=history_payload,
     )
     structured = AIChatStructuredOutput.model_validate(ai_result)
+    if structured.board_update is not None:
+      _require_fixed_columns(snapshot["board"], structured.board_update)
   except ai.AIConfigurationError as exc:
     raise HTTPException(status_code=503, detail=str(exc)) from exc
-  except (ai.AIResponseFormatError, ValidationError) as exc:
+  except (ai.AIResponseFormatError, ValidationError, ValueError) as exc:
     raise HTTPException(status_code=502, detail=f"Invalid AI structured output: {exc}") from exc
   except Exception as exc:
     raise HTTPException(status_code=502, detail=f"AI chat failed: {exc}") from exc

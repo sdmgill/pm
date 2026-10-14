@@ -56,5 +56,5 @@ On backend startup:
 ## Access paths
 
 - `GET /api/board` and `PUT /api/board` read and replace the board snapshot.
-- `PUT` must send `expected_version`; a mismatch is rejected with HTTP 409.
+- `PUT` must send `expected_version`. The write is a single `UPDATE ... WHERE user_id = ? AND version = ?`, so a stale or concurrent write is rejected with HTTP 409.
 - `POST /api/ai/chat` saves a validated AI board update using the same versioned write.

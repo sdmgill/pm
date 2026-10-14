@@ -79,8 +79,8 @@ def _structured_output_schema() -> dict[str, Any]:
                                 },
                             },
                             "cards": {
-                                "type": "object",
-                                "additionalProperties": {
+                                "type": "array",
+                                "items": {
                                     "type": "object",
                                     "properties": {
                                         "id": {"type": "string"},
@@ -122,6 +122,17 @@ def _parse_structured_json_output(output_text: str) -> dict[str, Any]:
     return parsed
 
 
+def _board_to_ai(board: dict[str, Any]) -> dict[str, Any]:
+    return {"columns": board["columns"], "cards": list(board["cards"].values())}
+
+
+def _board_from_ai(board: dict[str, Any]) -> dict[str, Any]:
+    cards = {card["id"]: card for card in board["cards"]}
+    if len(cards) != len(board["cards"]):
+        raise AIResponseFormatError("AI returned duplicate card ids")
+    return {"columns": board["columns"], "cards": cards}
+
+
 def run_kanban_assistant(
     board: dict[str, Any],
     user_message: str,
@@ -140,14 +151,15 @@ def run_kanban_assistant(
 
     instruction = (
         "You are a project-management assistant for a Kanban board. "
-        "Return only valid JSON with this shape: "
-        "{\"assistant_message\": string, \"board_update\": BoardOrNull}. "
-        "BoardOrNull must be either null or an object with keys \"columns\" and \"cards\" "
-        "matching the incoming board shape. Do not include markdown fences or extra keys."
+        "Reply in assistant_message. Set board_update to null when no change is needed; "
+        "otherwise set it to the complete updated board in the same shape as the current board. "
+        "Columns are fixed: keep every column id in the same order (titles may change). "
+        "Every card must appear in exactly one column's cardIds, and every cardIds entry "
+        "must be a card in cards. Give new cards a unique id."
     )
 
     prompt = (
-        f"Current board JSON:\n{json.dumps(board)}\n\n"
+        f"Current board JSON:\n{json.dumps(_board_to_ai(board))}\n\n"
         f"Conversation history:\n{history_text}\n\n"
         f"User message:\n{user_message}"
     )
@@ -158,10 +170,20 @@ def run_kanban_assistant(
             {"role": "system", "content": instruction},
             {"role": "user", "content": prompt},
         ],
+        text={
+            "format": {
+                "type": "json_schema",
+                "name": "kanban_response",
+                "schema": _structured_output_schema(),
+                "strict": True,
+            }
+        },
         temperature=0,
     )
 
     output_text = getattr(response, "output_text", "") or ""
     parsed = _parse_structured_json_output(output_text)
+    if isinstance(parsed.get("board_update"), dict):
+        parsed["board_update"] = _board_from_ai(parsed["board_update"])
     parsed["model"] = model
     return parsed

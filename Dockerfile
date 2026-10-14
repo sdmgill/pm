@@ -18,7 +18,7 @@ WORKDIR /app/backend
 RUN pip install --no-cache-dir uv
 
 COPY backend ./
-RUN uv sync --no-dev
+RUN uv sync --frozen --no-dev
 
 FROM python:3.12-slim AS runtime
 

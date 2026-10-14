@@ -147,47 +147,25 @@ def save_board_snapshot(
     db_path: Path,
     user_id: int,
     board_data: dict[str, Any],
-    expected_version: int | None = None,
+    expected_version: int,
 ) -> dict[str, Any]:
     with connect_db(db_path) as connection:
-        current = connection.execute(
-            "SELECT version FROM boards WHERE user_id = ?",
-            (user_id,),
-        ).fetchone()
-
-        if not current:
-            connection.execute(
-                "INSERT INTO boards (user_id, board_json, version) VALUES (?, ?, 1)",
-                (user_id, json.dumps(board_data)),
-            )
-            connection.commit()
-            return {
-                "version": 1,
-                "updated_at": connection.execute(
-                    "SELECT updated_at FROM boards WHERE user_id = ?",
-                    (user_id,),
-                ).fetchone()["updated_at"],
-            }
-
-        current_version = int(current["version"])
-        if expected_version is not None and expected_version != current_version:
-            raise ValueError(
-                f"Version mismatch. Expected {expected_version}, found {current_version}."
-            )
-
-        next_version = current_version + 1
-        connection.execute(
+        cursor = connection.execute(
             """
             UPDATE boards
-            SET board_json = ?, version = ?, updated_at = datetime('now')
-            WHERE user_id = ?
+            SET board_json = ?, version = version + 1, updated_at = datetime('now')
+            WHERE user_id = ? AND version = ?
             """,
-            (json.dumps(board_data), next_version, user_id),
+            (json.dumps(board_data), user_id, expected_version),
         )
+        if cursor.rowcount == 0:
+            raise ValueError(
+                f"Version mismatch. Expected version {expected_version} is not current."
+            )
         connection.commit()
 
-        updated_row = connection.execute(
-            "SELECT updated_at FROM boards WHERE user_id = ?",
+        row = connection.execute(
+            "SELECT version, updated_at FROM boards WHERE user_id = ?",
             (user_id,),
         ).fetchone()
-        return {"version": next_version, "updated_at": str(updated_row["updated_at"])}
+        return {"version": int(row["version"]), "updated_at": str(row["updated_at"])}

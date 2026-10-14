@@ -1,12 +1,37 @@
 import { expect, test } from "@playwright/test";
+import { installFakeBackend } from "./fakeBackend";
+
+test("signs in and out", async ({ page }) => {
+  const backend = await installFakeBackend(page, { authenticated: false });
+  await page.goto("/");
+
+  await page.getByRole("button", { name: /sign in/i }).click();
+  await expect(page.getByRole("heading", { name: "Kanban Studio" })).toBeVisible();
+  expect(backend.authenticated).toBe(true);
+
+  await page.getByRole("button", { name: /log out/i }).click();
+  await expect(page.getByRole("heading", { name: /sign in/i })).toBeVisible();
+  expect(backend.authenticated).toBe(false);
+});
+
+test("rejects invalid credentials", async ({ page }) => {
+  await installFakeBackend(page, { authenticated: false });
+  await page.goto("/");
+
+  await page.getByLabel("Password").fill("wrong");
+  await page.getByRole("button", { name: /sign in/i }).click();
+  await expect(page.getByText(/invalid username or password/i)).toBeVisible();
+});
 
 test("loads the kanban board", async ({ page }) => {
+  await installFakeBackend(page);
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Kanban Studio" })).toBeVisible();
   await expect(page.locator('[data-testid^="column-"]')).toHaveCount(5);
 });
 
-test("adds a card to a column", async ({ page }) => {
+test("adds a card to a column and saves it", async ({ page }) => {
+  const backend = await installFakeBackend(page);
   await page.goto("/");
   const firstColumn = page.locator('[data-testid^="column-"]').first();
   await firstColumn.getByRole("button", { name: /add a card/i }).click();
@@ -14,29 +39,82 @@ test("adds a card to a column", async ({ page }) => {
   await firstColumn.getByPlaceholder("Details").fill("Added via e2e.");
   await firstColumn.getByRole("button", { name: /add card/i }).click();
   await expect(firstColumn.getByText("Playwright card")).toBeVisible();
+
+  await expect
+    .poll(() => Object.values(backend.board.cards).map((card) => card.title))
+    .toContain("Playwright card");
 });
 
-test("moves a card between columns", async ({ page }) => {
+test("moves a card between columns and saves it", async ({ page }) => {
+  const backend = await installFakeBackend(page);
   await page.goto("/");
   const card = page.getByTestId("card-card-1");
   const targetColumn = page.getByTestId("column-col-discovery");
   await card.dragTo(targetColumn);
   await expect(targetColumn.getByTestId("card-card-1")).toBeVisible();
+
+  await expect
+    .poll(() => backend.board.columns.find((column) => column.id === "col-discovery")?.cardIds)
+    .toContain("card-1");
+});
+
+test("saves rapid column title typing without conflicts", async ({ page }) => {
+  const backend = await installFakeBackend(page);
+  await page.goto("/");
+  const titleInput = page.getByTestId("column-col-backlog").getByLabel("Column title");
+
+  await titleInput.fill("");
+  await titleInput.pressSequentially("Planning Phase", { delay: 20 });
+
+  await expect.poll(() => backend.board.columns[0].title).toBe("Planning Phase");
+  await expect(page.getByText(/saving changes/i)).toHaveCount(0);
+  await expect(titleInput).toHaveValue("Planning Phase");
+  await expect(page.getByText(/changed in another session/i)).toHaveCount(0);
+  expect(backend.conflicts).toBe(0);
+});
+
+test("edits a card and keeps the change after reload", async ({ page }) => {
+  const backend = await installFakeBackend(page);
+  await page.goto("/");
+  const card = page.getByTestId("card-card-2");
+
+  await card.getByRole("button", { name: /^edit /i }).click();
+  await card.getByLabel("Card title").fill("Edited in e2e");
+  await card.getByLabel("Card details").fill("New details");
+  await card.getByRole("button", { name: /save/i }).click();
+
+  await expect.poll(() => backend.board.cards["card-2"].title).toBe("Edited in e2e");
+
+  await page.reload();
+  const reloadedCard = page.getByTestId("card-card-2");
+  await expect(reloadedCard.getByText("Edited in e2e")).toBeVisible();
+  await expect(reloadedCard.getByText("New details")).toBeVisible();
 });
 
 test("applies AI chat board update", async ({ page }) => {
+  const backend = await installFakeBackend(page);
+  backend.chatReply = {
+    message: "Renamed Backlog to Planning.",
+    board: {
+      ...backend.board,
+      columns: backend.board.columns.map((column) =>
+        column.id === "col-backlog" ? { ...column, title: "Planning" } : column
+      ),
+    },
+  };
   await page.goto("/");
 
   await page.getByLabel("Chat input").fill("rename backlog to Planning");
   await page.getByRole("button", { name: /^send$/i }).click();
 
-  await expect(page.getByText("Updated backlog title to Planning.")).toBeVisible();
+  await expect(page.getByText(/Renamed Backlog to Planning\./)).toBeVisible();
   await expect(
     page.getByTestId("column-col-backlog").getByLabel("Column title")
   ).toHaveValue("Planning");
 });
 
 test("celebrates when a card moves into Done", async ({ page }) => {
+  await installFakeBackend(page);
   await page.goto("/");
 
   const card = page.getByTestId("card-card-6");
@@ -60,6 +138,7 @@ test("celebrates when a card moves into Done", async ({ page }) => {
 });
 
 test("does not celebrate when reordering inside Done", async ({ page }) => {
+  await installFakeBackend(page);
   await page.goto("/");
 
   const doneColumn = page.getByTestId("column-col-done");
