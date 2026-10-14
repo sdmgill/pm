@@ -50,7 +50,16 @@ test("moves a card between columns and saves it", async ({ page }) => {
   await page.goto("/");
   const card = page.getByTestId("card-card-1");
   const targetColumn = page.getByTestId("column-col-discovery");
-  await card.dragTo(targetColumn);
+  await targetColumn.scrollIntoViewIfNeeded();
+  const cardBox = await card.boundingBox();
+  const targetBox = await targetColumn.boundingBox();
+  if (!cardBox || !targetBox) {
+    throw new Error("Unable to resolve drag coordinates.");
+  }
+  await page.mouse.move(cardBox.x + cardBox.width / 2, cardBox.y + cardBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(targetBox.x + targetBox.width / 2, targetBox.y + 120, { steps: 14 });
+  await page.mouse.up();
   await expect(targetColumn.getByTestId("card-card-1")).toBeVisible();
 
   await expect
@@ -119,6 +128,8 @@ test("celebrates when a card moves into Done", async ({ page }) => {
 
   const card = page.getByTestId("card-card-6");
   const doneColumn = page.getByTestId("column-col-done");
+  await page.getByTestId("board-scroll").evaluate((el) => el.scrollTo({ left: el.scrollWidth }));
+  await expect(doneColumn).toBeInViewport();
   const cardBox = await card.boundingBox();
   const doneColumnBox = await doneColumn.boundingBox();
   if (!cardBox || !doneColumnBox) {
@@ -148,4 +159,24 @@ test("does not celebrate when reordering inside Done", async ({ page }) => {
 
   await expect(doneColumn).toHaveAttribute("data-celebrating", "false");
   await expect(page.getByTestId("done-confetti")).toHaveCount(0);
+});
+
+test("board scrolls horizontally and keeps columns a fixed width", async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 800 });
+  await installFakeBackend(page);
+  await page.goto("/");
+
+  const scroller = page.getByTestId("board-scroll");
+  await expect(scroller).toBeVisible();
+  const overflows = await scroller.evaluate((el) => el.scrollWidth > el.clientWidth);
+  expect(overflows).toBe(true);
+
+  const widths = await page
+    .locator('[data-testid^="column-"]')
+    .evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().width)));
+  expect(new Set(widths).size).toBe(1);
+
+  await scroller.evaluate((el) => el.scrollTo({ left: el.scrollWidth }));
+  await expect(page.getByTestId("column-col-done")).toBeInViewport();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });

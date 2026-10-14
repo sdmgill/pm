@@ -291,7 +291,10 @@ export const KanbanBoard = ({ board, onBoardChange }: KanbanBoardProps) => {
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
           >
-            <section className="grid gap-6 lg:grid-cols-5">
+            <section
+              className="board-scroll flex snap-x snap-proximity items-start gap-5 overflow-x-auto pb-4"
+              data-testid="board-scroll"
+            >
               {currentBoard.columns.map((column) => (
                 <KanbanColumn
                   key={column.id}

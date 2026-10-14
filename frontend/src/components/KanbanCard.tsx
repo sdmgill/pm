@@ -4,6 +4,18 @@ import { CSS } from "@dnd-kit/utilities";
 import clsx from "clsx";
 import type { Card } from "@/lib/kanban";
 
+const iconProps = {
+  width: 16,
+  height: 16,
+  viewBox: "0 0 24 24",
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: 2,
+  strokeLinecap: "round",
+  strokeLinejoin: "round",
+  "aria-hidden": true,
+} as const;
+
 type KanbanCardProps = {
   card: Card;
   onDelete: (cardId: string) => void;
@@ -94,7 +106,7 @@ export const KanbanCard = ({
         </form>
       ) : (
         <div className="flex items-start justify-between gap-3">
-          <div>
+          <div className="min-w-0 break-words">
             <h4 className="font-display text-base font-semibold text-[var(--navy-dark)]">
               {card.title}
             </h4>
@@ -102,22 +114,32 @@ export const KanbanCard = ({
               {card.details}
             </p>
           </div>
-          <div className="flex flex-col items-end gap-1">
+          <div className="flex shrink-0 items-center gap-1">
             <button
               type="button"
               onClick={startEditing}
-              className="rounded-full border border-transparent px-2 py-1 text-xs font-semibold text-[var(--gray-text)] transition hover:border-[var(--stroke)] hover:text-[var(--navy-dark)]"
+              className="rounded-full p-1.5 text-[var(--gray-text)] transition hover:bg-[var(--surface)] hover:text-[var(--primary-blue)]"
               aria-label={`Edit ${card.title}`}
+              title="Edit"
             >
-              Edit
+              <svg {...iconProps}>
+                <path d="M12 20h9" />
+                <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+              </svg>
             </button>
             <button
               type="button"
               onClick={() => onDelete(card.id)}
-              className="rounded-full border border-transparent px-2 py-1 text-xs font-semibold text-[var(--gray-text)] transition hover:border-[var(--stroke)] hover:text-[var(--navy-dark)]"
+              className="rounded-full p-1.5 text-[var(--gray-text)] transition hover:bg-red-50 hover:text-red-600"
               aria-label={`Delete ${card.title}`}
+              title="Delete"
             >
-              Remove
+              <svg {...iconProps}>
+                <path d="M3 6h18" />
+                <path d="M8 6V4h8v2" />
+                <path d="M19 6l-1 14H6L5 6" />
+                <path d="M10 11v6M14 11v6" />
+              </svg>
             </button>
           </div>
         </div>

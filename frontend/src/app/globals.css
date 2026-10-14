@@ -29,6 +29,11 @@ body {
   margin: 0;
 }
 
+.board-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(3, 33, 71, 0.25) transparent;
+}
+
 .font-display {
   font-family: var(--font-display), "Segoe UI", sans-serif;
 }
