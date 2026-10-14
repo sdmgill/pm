@@ -3,7 +3,8 @@
 ## Business Requirements
 
 This project is building a Project Management App. Key features:
-- A user can sign in
+- A user can register, sign in, change their password and delete their account
+- A user can have multiple Kanban boards and switch between them
 - When signed in, the user sees a Kanban board representing their project
 - The Kanban board has fixed columns that can be renamed
 - The cards on the Kanban board can be moved with drag and drop, and edited
@@ -11,9 +12,7 @@ This project is building a Project Management App. Key features:
 
 ## Limitations
 
-For the MVP, there will only be a user sign in (hardcoded to 'user' and 'password') but the database will support multiple users for future.
-
-For the MVP, there will only be 1 Kanban board per signed in user.
+Users can register and sign in with their own username and password; a demo user 'user' / 'password' is seeded. Each user can create, rename and delete multiple Kanban boards.
 
 For the MVP, this will run locally (in a docker container)
 

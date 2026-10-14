@@ -221,3 +221,14 @@ This plan is implementation-first and optimized for MVP speed, correctness, and 
 - Moving a card into Done produces a clear but brief pulse + confetti celebration.
 - Celebration does not block drag/drop or card editing interactions.
 - Reduced-motion users receive a subtle fallback without motion-heavy effects.
+## Part 12: Users and multiple boards
+
+### Checklist
+
+- [x] Real user accounts: register, login against hashed passwords, change password, delete account.
+- [x] Multiple named boards per user with create, rename, delete (last board protected).
+- [x] Per-board AI chat and versioned saves; boards scoped to their owner.
+- [x] In-place migration of the single-board schema.
+- [x] Frontend: register form, board switcher, per-board workspace.
+- [ ] Frontend UI for change password and delete account.
+- [ ] Further features (card priority, due dates, labels, search/filter, board export).

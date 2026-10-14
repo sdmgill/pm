@@ -61,7 +61,7 @@ export const KanbanCard = ({
       ref={setNodeRef}
       style={style}
       className={clsx(
-        "rounded-2xl border border-transparent bg-white px-4 py-4 shadow-[0_12px_24px_rgba(3,33,71,0.08)]",
+        "rounded-2xl border border-transparent bg-white px-3 py-3 shadow-[0_12px_24px_rgba(3,33,71,0.08)]",
         "transition-all duration-150",
         isDragging && "opacity-60 shadow-[0_18px_32px_rgba(3,33,71,0.16)]",
         isCelebrating && !reducedMotion && "done-card-celebrate",
@@ -105,16 +105,16 @@ export const KanbanCard = ({
           </div>
         </form>
       ) : (
-        <div className="flex items-start justify-between gap-3">
+        <div className="flex flex-col-reverse gap-1">
           <div className="min-w-0 break-words">
-            <h4 className="font-display text-base font-semibold text-[var(--navy-dark)]">
+            <h4 className="font-display text-sm font-semibold text-[var(--navy-dark)]">
               {card.title}
             </h4>
-            <p className="mt-2 text-sm leading-6 text-[var(--gray-text)]">
+            <p className="mt-1 text-xs leading-5 text-[var(--gray-text)]">
               {card.details}
             </p>
           </div>
-          <div className="flex shrink-0 items-center gap-1">
+          <div className="flex shrink-0 items-center justify-end">
             <button
               type="button"
               onClick={startEditing}

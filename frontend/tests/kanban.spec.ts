@@ -128,7 +128,6 @@ test("celebrates when a card moves into Done", async ({ page }) => {
 
   const card = page.getByTestId("card-card-6");
   const doneColumn = page.getByTestId("column-col-done");
-  await page.getByTestId("board-scroll").evaluate((el) => el.scrollTo({ left: el.scrollWidth }));
   await expect(doneColumn).toBeInViewport();
   const cardBox = await card.boundingBox();
   const doneColumnBox = await doneColumn.boundingBox();
@@ -161,22 +160,83 @@ test("does not celebrate when reordering inside Done", async ({ page }) => {
   await expect(page.getByTestId("done-confetti")).toHaveCount(0);
 });
 
-test("board scrolls horizontally and keeps columns a fixed width", async ({ page }) => {
-  await page.setViewportSize({ width: 900, height: 800 });
-  await installFakeBackend(page);
+test("board wraps columns instead of scrolling horizontally", async ({ page }) => {
+  for (const width of [900, 1400]) {
+    await page.setViewportSize({ width, height: 800 });
+    await installFakeBackend(page);
+    await page.goto("/");
+
+    await expect(page.getByTestId("column-col-done")).toBeVisible();
+    const noOverflow = await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth
+    );
+    expect(noOverflow).toBe(true);
+
+    const boxes = await page
+      .locator('[data-testid^="column-"]')
+      .evaluateAll((els) =>
+        els.map((el) => {
+          const { left, right } = el.getBoundingClientRect();
+          return { left, right };
+        })
+      );
+    for (const box of boxes) {
+      expect(box.left).toBeGreaterThanOrEqual(0);
+      expect(box.right).toBeLessThanOrEqual(width);
+    }
+  }
+});
+
+test("registers a new account", async ({ page }) => {
+  const backend = await installFakeBackend(page, { authenticated: false });
   await page.goto("/");
 
-  const scroller = page.getByTestId("board-scroll");
-  await expect(scroller).toBeVisible();
-  const overflows = await scroller.evaluate((el) => el.scrollWidth > el.clientWidth);
-  expect(overflows).toBe(true);
+  await page.getByRole("button", { name: /create one/i }).click();
+  await page.getByLabel("Username").fill("newuser");
+  await page.getByLabel("Password").fill("secret1");
+  await page.getByRole("button", { name: "Create account" }).click();
 
-  const widths = await page
-    .locator('[data-testid^="column-"]')
-    .evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().width)));
-  expect(new Set(widths).size).toBe(1);
+  await expect(page.getByText("Signed in as newuser")).toBeVisible();
+  expect(backend.authenticated).toBe(true);
+});
 
-  await scroller.evaluate((el) => el.scrollTo({ left: el.scrollWidth }));
-  await expect(page.getByTestId("column-col-done")).toBeInViewport();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+test("creates a second board, keeps cards separate, and renames and deletes it", async ({
+  page,
+}) => {
+  const backend = await installFakeBackend(page);
+  await page.goto("/");
+  await expect(page.getByTestId("card-card-1")).toBeVisible();
+
+  await page.getByRole("button", { name: "New board" }).click();
+  await page.getByLabel("Board name").fill("Roadmap");
+  await page.getByRole("button", { name: "Create" }).click();
+
+  await expect(page.getByRole("combobox", { name: "Board" })).toHaveValue("2");
+  await expect(page.getByTestId("card-card-1")).toHaveCount(0);
+
+  const firstColumn = page.locator('[data-testid^="column-"]').first();
+  await firstColumn.getByRole("button", { name: /add a card/i }).click();
+  await firstColumn.getByPlaceholder("Card title").fill("Roadmap card");
+  await firstColumn.getByPlaceholder("Details").fill("Only on board two.");
+  await firstColumn.getByRole("button", { name: /add card/i }).click();
+  await expect
+    .poll(() => Object.values(backend.boards[1].board.cards).map((card) => card.title))
+    .toContain("Roadmap card");
+
+  await page.getByRole("combobox", { name: "Board" }).selectOption("1");
+  await expect(page.getByTestId("card-card-1")).toBeVisible();
+  await expect(page.getByText("Roadmap card")).toHaveCount(0);
+  expect(Object.keys(backend.boards[0].board.cards)).not.toContain("Roadmap card");
+
+  await page.getByRole("combobox", { name: "Board" }).selectOption("2");
+  await page.getByRole("button", { name: "Rename" }).click();
+  await page.getByLabel("Board name").fill("Launch plan");
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByRole("option", { name: "Launch plan" })).toBeAttached();
+  expect(backend.boards[1].name).toBe("Launch plan");
+
+  await page.locator("header").getByRole("button", { name: "Delete" }).click();
+  await page.getByRole("button", { name: /confirm delete/i }).click();
+  await expect(page.getByRole("combobox", { name: "Board" })).toHaveValue("1");
+  expect(backend.boards).toHaveLength(1);
 });

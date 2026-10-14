@@ -2,17 +2,28 @@ import { FormEvent, useState } from "react";
 
 type LoginFormProps = {
   onLogin: (username: string, password: string) => Promise<void>;
+  onRegister: (username: string, password: string) => Promise<void>;
   error: string | null;
 };
 
-export const LoginForm = ({ onLogin, error }: LoginFormProps) => {
+export const LoginForm = ({ onLogin, onRegister, error }: LoginFormProps) => {
+  const [isRegistering, setIsRegistering] = useState(false);
   const [username, setUsername] = useState("user");
   const [password, setPassword] = useState("password");
 
+  const switchMode = () => {
+    const next = !isRegistering;
+    setIsRegistering(next);
+    setUsername(next ? "" : "user");
+    setPassword(next ? "" : "password");
+  };
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    await onLogin(username, password);
+    await (isRegistering ? onRegister(username, password) : onLogin(username, password));
   };
+
+  const submitLabel = isRegistering ? "Create account" : "Sign in";
 
   return (
     <main className="mx-auto flex min-h-screen max-w-[640px] items-center justify-center px-6">
@@ -21,10 +32,12 @@ export const LoginForm = ({ onLogin, error }: LoginFormProps) => {
           PM MVP
         </p>
         <h1 className="mt-3 font-display text-3xl font-semibold text-[var(--navy-dark)]">
-          Sign in
+          {submitLabel}
         </h1>
         <p className="mt-3 text-sm text-[var(--gray-text)]">
-          Use the demo credentials to access your board.
+          {isRegistering
+            ? "Pick a username and password to get your own boards."
+            : "Use the demo credentials or your own account."}
         </p>
 
         <form className="mt-6 space-y-4" onSubmit={handleSubmit}>
@@ -48,7 +61,7 @@ export const LoginForm = ({ onLogin, error }: LoginFormProps) => {
             type="password"
             value={password}
             onChange={(event) => setPassword(event.target.value)}
-            autoComplete="current-password"
+            autoComplete={isRegistering ? "new-password" : "current-password"}
           />
 
           {error ? (
@@ -61,9 +74,17 @@ export const LoginForm = ({ onLogin, error }: LoginFormProps) => {
             className="w-full rounded-xl bg-[var(--secondary-purple)] px-4 py-3 text-sm font-semibold text-white"
             type="submit"
           >
-            Sign in
+            {submitLabel}
           </button>
         </form>
+
+        <button
+          className="mt-4 text-sm font-medium text-[var(--primary-blue)]"
+          type="button"
+          onClick={switchMode}
+        >
+          {isRegistering ? "Have an account? Sign in" : "Need an account? Create one"}
+        </button>
       </section>
     </main>
   );

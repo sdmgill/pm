@@ -4,7 +4,7 @@ import type { BoardData } from "@/lib/kanban";
 
 // Owns the board and its server version. Saves are sent one at a time; edits made
 // while a save is in flight are coalesced and sent with the version that save returns.
-export const useBoardSync = () => {
+export const useBoardSync = (boardId: number | null) => {
   const [board, setBoard] = useState<BoardData | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -19,15 +19,18 @@ export const useBoardSync = () => {
   }, []);
 
   const reload = useCallback(async () => {
+    if (boardId === null) {
+      return;
+    }
     setIsLoading(true);
     try {
-      applySnapshot(await api.getBoard());
+      applySnapshot(await api.getBoard(boardId));
     } catch {
       setError("Unable to load your board right now.");
     } finally {
       setIsLoading(false);
     }
-  }, [applySnapshot]);
+  }, [applySnapshot, boardId]);
 
   const flush = useCallback(async () => {
     if (savingRef.current) {
@@ -37,10 +40,10 @@ export const useBoardSync = () => {
     setIsSaving(true);
 
     try {
-      while (pendingRef.current && versionRef.current !== null) {
+      while (boardId !== null && pendingRef.current && versionRef.current !== null) {
         const nextBoard = pendingRef.current;
         pendingRef.current = null;
-        const snapshot = await api.saveBoard(nextBoard, versionRef.current);
+        const snapshot = await api.saveBoard(boardId, nextBoard, versionRef.current);
         versionRef.current = snapshot.version;
       }
     } catch (error) {
@@ -55,7 +58,7 @@ export const useBoardSync = () => {
       savingRef.current = false;
       setIsSaving(false);
     }
-  }, [reload]);
+  }, [boardId, reload]);
 
   const updateBoard = useCallback(
     (nextBoard: BoardData) => {

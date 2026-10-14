@@ -7,7 +7,7 @@ from pathlib import Path
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Response
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ValidationError, model_validator
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from app import ai
 from app import db
@@ -20,11 +20,36 @@ SESSION_SECRET = os.getenv("SESSION_SECRET", "")
 SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 VALID_USERNAME = "user"
 VALID_PASSWORD = "password"
+USERNAME_PATTERN = r"^[A-Za-z0-9_-]{3,32}$"
 
 
 class LoginRequest(BaseModel):
   username: str
   password: str
+
+
+class RegisterRequest(BaseModel):
+  username: str = Field(pattern=USERNAME_PATTERN)
+  password: str = Field(min_length=6, max_length=128)
+
+
+class ChangePasswordRequest(BaseModel):
+  current_password: str
+  new_password: str = Field(min_length=6, max_length=128)
+
+
+class DeleteAccountRequest(BaseModel):
+  password: str
+
+
+class BoardNameRequest(BaseModel):
+  name: str = Field(min_length=1, max_length=80)
+
+
+class BoardSummary(BaseModel):
+  id: int
+  name: str
+  updated_at: str
 
 
 class CardModel(BaseModel):
@@ -63,6 +88,8 @@ class BoardModel(BaseModel):
 
 
 class BoardResponse(BaseModel):
+  id: int
+  name: str
   board: BoardModel
   version: int
   updated_at: str
@@ -95,6 +122,8 @@ class AIChatStructuredOutput(BaseModel):
 
 
 class AIChatResponse(BaseModel):
+  id: int
+  name: str
   model: str
   assistant_message: str
   board_updated: bool
@@ -129,7 +158,7 @@ def _get_authenticated_user(cookie_value: str | None) -> str | None:
   if not issued_at.isdigit() or time.time() - int(issued_at) > SESSION_MAX_AGE_SECONDS:
     return None
 
-  if username != VALID_USERNAME:
+  if db.get_user_id(DB_PATH, username) is None:
     return None
 
   return username
@@ -137,11 +166,13 @@ def _get_authenticated_user(cookie_value: str | None) -> str | None:
 
 def _require_authenticated_user(
   pm_session: str | None = Cookie(default=None),
-) -> str:
+) -> int:
+  """Return the signed-in user's id, or 401."""
   username = _get_authenticated_user(pm_session)
-  if not username:
+  user_id = db.get_user_id(DB_PATH, username) if username else None
+  if user_id is None:
     raise HTTPException(status_code=401, detail="Not authenticated")
-  return username
+  return user_id
 
 
 def _require_fixed_columns(current_board: dict[str, object], next_board: BoardModel) -> None:
@@ -151,12 +182,35 @@ def _require_fixed_columns(current_board: dict[str, object], next_board: BoardMo
     raise ValueError("Columns are fixed; only column titles can change")
 
 
+def _set_session_cookie(response: Response, username: str) -> None:
+  response.set_cookie(
+    key=SESSION_COOKIE_NAME,
+    value=_create_session_cookie(username),
+    httponly=True,
+    samesite="lax",
+    secure=False,
+    path="/",
+    max_age=SESSION_MAX_AGE_SECONDS,
+  )
+
+
+def _load_snapshot(user_id: int, board_id: int | None = None) -> dict[str, object]:
+  snapshot = db.get_board_snapshot(DB_PATH, user_id, board_id)
+  if not snapshot:
+    if board_id is None:
+      db.ensure_board(DB_PATH, user_id)
+      snapshot = db.get_board_snapshot(DB_PATH, user_id)
+    if not snapshot:
+      raise HTTPException(status_code=404, detail="Board not found")
+  return snapshot
+
+
 @app.on_event("startup")
 def startup() -> None:
   if not SESSION_SECRET:
     raise RuntimeError("SESSION_SECRET must be set")
   db.init_db(DB_PATH)
-  user_id = db.ensure_user(DB_PATH, VALID_USERNAME)
+  user_id = db.ensure_user(DB_PATH, VALID_USERNAME, VALID_PASSWORD)
   db.ensure_board(DB_PATH, user_id)
 
 
@@ -173,21 +227,24 @@ def auth_me(pm_session: str | None = Cookie(default=None)) -> dict[str, str | bo
   return {"authenticated": True, "user": username}
 
 
+@app.post("/auth/register", status_code=201)
+def auth_register(payload: RegisterRequest, response: Response) -> dict[str, str | bool]:
+  try:
+    user_id = db.create_user(DB_PATH, payload.username, payload.password)
+  except ValueError as exc:
+    raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+  db.ensure_board(DB_PATH, user_id)
+  _set_session_cookie(response, payload.username)
+  return {"authenticated": True, "user": payload.username}
+
+
 @app.post("/auth/login")
 def auth_login(payload: LoginRequest, response: Response) -> dict[str, str | bool]:
-  if payload.username != VALID_USERNAME or payload.password != VALID_PASSWORD:
+  if db.verify_user(DB_PATH, payload.username, payload.password) is None:
     raise HTTPException(status_code=401, detail="Invalid credentials")
 
-  session_cookie = _create_session_cookie(payload.username)
-  response.set_cookie(
-    key=SESSION_COOKIE_NAME,
-    value=session_cookie,
-    httponly=True,
-    samesite="lax",
-    secure=False,
-    path="/",
-    max_age=SESSION_MAX_AGE_SECONDS,
-  )
+  _set_session_cookie(response, payload.username)
   return {"authenticated": True, "user": payload.username}
 
 
@@ -197,29 +254,34 @@ def auth_logout(response: Response) -> dict[str, bool]:
   return {"authenticated": False}
 
 
-@app.get("/api/board", response_model=BoardResponse)
-def get_board(username: str = Depends(_require_authenticated_user)) -> dict[str, object]:
-  user_id = db.ensure_user(DB_PATH, username)
-  db.ensure_board(DB_PATH, user_id)
-  snapshot = db.get_board_snapshot(DB_PATH, user_id)
+@app.post("/auth/change-password")
+def auth_change_password(
+  payload: ChangePasswordRequest,
+  user_id: int = Depends(_require_authenticated_user),
+) -> dict[str, bool]:
+  if not db.check_user_password(DB_PATH, user_id, payload.current_password):
+    raise HTTPException(status_code=403, detail="Current password is incorrect")
+  db.change_password(DB_PATH, user_id, payload.new_password)
+  return {"changed": True}
 
-  if not snapshot:
-    raise HTTPException(status_code=500, detail="Board data is unavailable")
 
-  return snapshot
+@app.delete("/auth/account")
+def auth_delete_account(
+  payload: DeleteAccountRequest,
+  response: Response,
+  user_id: int = Depends(_require_authenticated_user),
+) -> dict[str, bool]:
+  if not db.check_user_password(DB_PATH, user_id, payload.password):
+    raise HTTPException(status_code=403, detail="Password is incorrect")
+  db.delete_user(DB_PATH, user_id)
+  response.delete_cookie(key=SESSION_COOKIE_NAME, path="/")
+  return {"deleted": True}
 
 
-@app.put("/api/board", response_model=BoardResponse)
-def update_board(
-  payload: UpdateBoardRequest,
-  username: str = Depends(_require_authenticated_user),
+def _save_board(
+  user_id: int, board_id: int | None, payload: UpdateBoardRequest
 ) -> dict[str, object]:
-  user_id = db.ensure_user(DB_PATH, username)
-  db.ensure_board(DB_PATH, user_id)
-
-  snapshot = db.get_board_snapshot(DB_PATH, user_id)
-  if not snapshot:
-    raise HTTPException(status_code=500, detail="Board data is unavailable")
+  snapshot = _load_snapshot(user_id, board_id)
 
   try:
     _require_fixed_columns(snapshot["board"], payload.board)
@@ -234,43 +296,22 @@ def update_board(
       user_id,
       board_data,
       expected_version=payload.expected_version,
+      board_id=int(snapshot["id"]),
     )
   except ValueError as exc:
     raise HTTPException(status_code=409, detail=str(exc)) from exc
 
   return {
+    "id": snapshot["id"],
+    "name": snapshot["name"],
     "board": board_data,
     "version": write_result["version"],
     "updated_at": write_result["updated_at"],
   }
 
 
-@app.get("/api/ai/connectivity", response_model=AIConnectivityResponse)
-def ai_connectivity_check(
-  username: str = Depends(_require_authenticated_user),
-) -> dict[str, str]:
-  _ = username
-
-  try:
-    return ai.run_connectivity_check("2+2")
-  except ai.AIConfigurationError as exc:
-    raise HTTPException(status_code=503, detail=str(exc)) from exc
-  except Exception as exc:
-    raise HTTPException(status_code=502, detail=f"AI connectivity failed: {exc}") from exc
-
-
-@app.post("/api/ai/chat", response_model=AIChatResponse)
-def ai_chat(
-  payload: AIChatRequest,
-  username: str = Depends(_require_authenticated_user),
-) -> dict[str, object]:
-  user_id = db.ensure_user(DB_PATH, username)
-  db.ensure_board(DB_PATH, user_id)
-
-  snapshot = db.get_board_snapshot(DB_PATH, user_id)
-  if not snapshot:
-    raise HTTPException(status_code=500, detail="Board data is unavailable")
-
+def _ai_chat(user_id: int, board_id: int | None, payload: AIChatRequest) -> dict[str, object]:
+  snapshot = _load_snapshot(user_id, board_id)
   history_payload = [message.model_dump(mode="json") for message in payload.conversation_history]
 
   try:
@@ -302,6 +343,7 @@ def ai_chat(
         user_id,
         board_payload,
         expected_version=version,
+        board_id=int(snapshot["id"]),
       )
     except ValueError as exc:
       raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -311,6 +353,8 @@ def ai_chat(
     board_updated = True
 
   return {
+    "id": snapshot["id"],
+    "name": snapshot["name"],
     "model": str(ai_result.get("model", ai.get_ai_model())),
     "assistant_message": structured.assistant_message,
     "board_updated": board_updated,
@@ -318,6 +362,104 @@ def ai_chat(
     "version": version,
     "updated_at": updated_at,
   }
+
+
+# Default-board endpoints (the user's oldest board), kept for the original single-board API.
+@app.get("/api/board", response_model=BoardResponse)
+def get_board(user_id: int = Depends(_require_authenticated_user)) -> dict[str, object]:
+  return _load_snapshot(user_id)
+
+
+@app.put("/api/board", response_model=BoardResponse)
+def update_board(
+  payload: UpdateBoardRequest,
+  user_id: int = Depends(_require_authenticated_user),
+) -> dict[str, object]:
+  return _save_board(user_id, None, payload)
+
+
+@app.post("/api/ai/chat", response_model=AIChatResponse)
+def ai_chat(
+  payload: AIChatRequest,
+  user_id: int = Depends(_require_authenticated_user),
+) -> dict[str, object]:
+  return _ai_chat(user_id, None, payload)
+
+
+# Multi-board endpoints.
+@app.get("/api/boards", response_model=list[BoardSummary])
+def list_boards(user_id: int = Depends(_require_authenticated_user)) -> list[dict[str, object]]:
+  return db.list_boards(DB_PATH, user_id)
+
+
+@app.post("/api/boards", response_model=BoardResponse, status_code=201)
+def create_board(
+  payload: BoardNameRequest,
+  user_id: int = Depends(_require_authenticated_user),
+) -> dict[str, object]:
+  board_id = db.create_board(DB_PATH, user_id, payload.name.strip())
+  return _load_snapshot(user_id, board_id)
+
+
+@app.get("/api/boards/{board_id}", response_model=BoardResponse)
+def get_board_by_id(
+  board_id: int, user_id: int = Depends(_require_authenticated_user)
+) -> dict[str, object]:
+  return _load_snapshot(user_id, board_id)
+
+
+@app.put("/api/boards/{board_id}", response_model=BoardResponse)
+def update_board_by_id(
+  board_id: int,
+  payload: UpdateBoardRequest,
+  user_id: int = Depends(_require_authenticated_user),
+) -> dict[str, object]:
+  return _save_board(user_id, board_id, payload)
+
+
+@app.patch("/api/boards/{board_id}", response_model=BoardSummary)
+def rename_board(
+  board_id: int,
+  payload: BoardNameRequest,
+  user_id: int = Depends(_require_authenticated_user),
+) -> dict[str, object]:
+  if not db.rename_board(DB_PATH, user_id, board_id, payload.name.strip()):
+    raise HTTPException(status_code=404, detail="Board not found")
+  return next(b for b in db.list_boards(DB_PATH, user_id) if b["id"] == board_id)
+
+
+@app.delete("/api/boards/{board_id}")
+def delete_board(
+  board_id: int, user_id: int = Depends(_require_authenticated_user)
+) -> dict[str, bool]:
+  _load_snapshot(user_id, board_id)
+  if len(db.list_boards(DB_PATH, user_id)) <= 1:
+    raise HTTPException(status_code=409, detail="Cannot delete your only board")
+  db.delete_board(DB_PATH, user_id, board_id)
+  return {"deleted": True}
+
+
+@app.post("/api/boards/{board_id}/ai/chat", response_model=AIChatResponse)
+def ai_chat_by_id(
+  board_id: int,
+  payload: AIChatRequest,
+  user_id: int = Depends(_require_authenticated_user),
+) -> dict[str, object]:
+  return _ai_chat(user_id, board_id, payload)
+
+
+@app.get("/api/ai/connectivity", response_model=AIConnectivityResponse)
+def ai_connectivity_check(
+  user_id: int = Depends(_require_authenticated_user),
+) -> dict[str, str]:
+  _ = user_id
+
+  try:
+    return ai.run_connectivity_check("2+2")
+  except ai.AIConfigurationError as exc:
+    raise HTTPException(status_code=503, detail=str(exc)) from exc
+  except Exception as exc:
+    raise HTTPException(status_code=502, detail=f"AI connectivity failed: {exc}") from exc
 
 
 if STATIC_DIR.exists():

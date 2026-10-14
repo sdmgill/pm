@@ -1,35 +1,24 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { AIChatSidebar } from "@/components/AIChatSidebar";
-import { KanbanBoard } from "@/components/KanbanBoard";
+import { useCallback, useEffect, useState } from "react";
+import { BoardSwitcher } from "@/components/BoardSwitcher";
+import { BoardWorkspace } from "@/components/BoardWorkspace";
 import { LoginForm } from "@/components/LoginForm";
-import { useBoardSync } from "@/hooks/useBoardSync";
-import { api, ApiError, type ChatMessage } from "@/lib/api";
-
-const initialChatMessages: ChatMessage[] = [
-  {
-    role: "assistant",
-    content:
-      "Hi, I can explain your board or update it when you ask. Example: rename backlog to Planning.",
-  },
-];
+import { api, ApiError, type BoardSummary } from "@/lib/api";
 
 export const AuthenticatedHome = () => {
   const [isCheckingSession, setIsCheckingSession] = useState(true);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [user, setUser] = useState<string | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>(initialChatMessages);
-  const [chatError, setChatError] = useState<string | null>(null);
-  const [isChatSending, setIsChatSending] = useState(false);
-  const boardSync = useBoardSync();
-  const { reload: reloadBoard } = boardSync;
+  const [boards, setBoards] = useState<BoardSummary[]>([]);
+  const [activeBoardId, setActiveBoardId] = useState<number | null>(null);
+  const [boardsError, setBoardsError] = useState<string | null>(null);
 
   useEffect(() => {
     const checkSession = async () => {
       try {
         const session = await api.me();
-        setIsAuthenticated(session.authenticated);
+        setUser(session.authenticated ? session.user : null);
       } catch {
         setAuthError("Unable to connect to authentication service.");
       } finally {
@@ -40,25 +29,56 @@ export const AuthenticatedHome = () => {
     void checkSession();
   }, []);
 
-  useEffect(() => {
-    if (isAuthenticated) {
-      void reloadBoard();
+  const loadBoards = useCallback(async () => {
+    try {
+      const list = await api.listBoards();
+      setBoards(list);
+      setActiveBoardId((current) =>
+        list.some((board) => board.id === current) ? current : (list[0]?.id ?? null)
+      );
+    } catch {
+      setBoardsError("Unable to load your boards right now.");
     }
-  }, [isAuthenticated, reloadBoard]);
+  }, []);
 
-  const handleLogin = async (username: string, password: string) => {
+  useEffect(() => {
+    if (user) {
+      void loadBoards();
+    }
+  }, [user, loadBoards]);
+
+  const authenticate = async (
+    action: (username: string, password: string) => Promise<{ user: string | null }>,
+    username: string,
+    password: string,
+    failureMessage: (error: unknown) => string
+  ) => {
     setAuthError(null);
     try {
-      await api.login(username, password);
-      setIsAuthenticated(true);
+      const session = await action(username, password);
+      setUser(session.user);
     } catch (error) {
-      setAuthError(
-        error instanceof ApiError && error.status === 401
-          ? "Invalid username or password."
-          : "Unable to sign in right now."
-      );
+      setAuthError(failureMessage(error));
     }
   };
+
+  const handleLogin = (username: string, password: string) =>
+    authenticate(api.login, username, password, (error) =>
+      error instanceof ApiError && error.status === 401
+        ? "Invalid username or password."
+        : "Unable to sign in right now."
+    );
+
+  const handleRegister = (username: string, password: string) =>
+    authenticate(api.register, username, password, (error) => {
+      if (error instanceof ApiError && error.status === 409) {
+        return "That username is already taken.";
+      }
+      if (error instanceof ApiError && error.status === 422) {
+        return "Username must be 3-32 letters, numbers, - or _, and password at least 6 characters.";
+      }
+      return "Unable to create the account right now.";
+    });
 
   const handleLogout = async () => {
     try {
@@ -67,37 +87,51 @@ export const AuthenticatedHome = () => {
       // Ignore logout network errors and still clear UI state for safety.
     }
 
-    setIsAuthenticated(false);
+    setUser(null);
     setAuthError(null);
-    boardSync.reset();
-    setChatMessages(initialChatMessages);
-    setChatError(null);
-    setIsChatSending(false);
+    setBoards([]);
+    setActiveBoardId(null);
+    setBoardsError(null);
   };
 
-  const handleSendChat = async (message: string) => {
-    setChatError(null);
-    setIsChatSending(true);
-    const nextMessages: ChatMessage[] = [...chatMessages, { role: "user", content: message }];
-    setChatMessages(nextMessages);
-
+  const runBoardAction = async (action: () => Promise<void>) => {
+    setBoardsError(null);
     try {
-      const payload = await api.sendChat(message, chatMessages);
-      boardSync.applySnapshot(payload);
-
-      const updateSuffix = payload.board_updated
-        ? " I applied the board update automatically."
-        : "";
-      setChatMessages([
-        ...nextMessages,
-        { role: "assistant", content: `${payload.assistant_message}${updateSuffix}` },
-      ]);
+      await action();
     } catch {
-      setChatError("AI request failed. Please try again.");
-    } finally {
-      setIsChatSending(false);
+      setBoardsError("Board action failed. Please try again.");
     }
   };
+
+  const handleCreateBoard = (name: string) =>
+    runBoardAction(async () => {
+      const created = await api.createBoard(name);
+      setBoards((current) => [
+        ...current,
+        { id: created.id, name: created.name, updated_at: created.updated_at },
+      ]);
+      setActiveBoardId(created.id);
+    });
+
+  const handleRenameBoard = (name: string) =>
+    runBoardAction(async () => {
+      if (activeBoardId === null) {
+        return;
+      }
+      const renamed = await api.renameBoard(activeBoardId, name);
+      setBoards((current) =>
+        current.map((board) => (board.id === renamed.id ? renamed : board))
+      );
+    });
+
+  const handleDeleteBoard = () =>
+    runBoardAction(async () => {
+      if (activeBoardId === null) {
+        return;
+      }
+      await api.deleteBoard(activeBoardId);
+      await loadBoards();
+    });
 
   if (isCheckingSession) {
     return (
@@ -107,26 +141,28 @@ export const AuthenticatedHome = () => {
     );
   }
 
-  if (!isAuthenticated) {
-    return <LoginForm onLogin={handleLogin} error={authError} />;
+  if (!user) {
+    return <LoginForm onLogin={handleLogin} onRegister={handleRegister} error={authError} />;
   }
-
-  const { board, isLoading, isSaving, error: boardError } = boardSync;
 
   return (
     <>
       <header className="sticky top-0 z-10 border-b border-[var(--stroke)] bg-white/85 backdrop-blur">
-        <div className="mx-auto flex max-w-[1500px] items-center justify-between px-6 py-3">
+        <div className="mx-auto flex max-w-[1500px] flex-wrap items-center justify-between gap-3 px-6 py-3">
           <div>
-            <p className="text-sm font-medium text-[var(--navy-dark)]">Signed in as user</p>
-            {isLoading ? (
-              <p className="text-xs text-[var(--gray-text)]">Loading board...</p>
-            ) : null}
-            {isSaving ? (
-              <p className="text-xs text-[var(--gray-text)]">Saving changes...</p>
-            ) : null}
-            {boardError ? <p className="text-xs text-red-700">{boardError}</p> : null}
+            <p className="text-sm font-medium text-[var(--navy-dark)]">Signed in as {user}</p>
+            {boardsError ? <p className="text-xs text-red-700">{boardsError}</p> : null}
           </div>
+          {activeBoardId !== null ? (
+            <BoardSwitcher
+              boards={boards}
+              activeBoardId={activeBoardId}
+              onSelect={setActiveBoardId}
+              onCreate={handleCreateBoard}
+              onRename={handleRenameBoard}
+              onDelete={handleDeleteBoard}
+            />
+          ) : null}
           <button
             className="rounded-lg border border-[var(--stroke)] px-3 py-2 text-sm font-medium text-[var(--navy-dark)]"
             onClick={handleLogout}
@@ -136,22 +172,12 @@ export const AuthenticatedHome = () => {
           </button>
         </div>
       </header>
-      {!board ? (
+      {activeBoardId === null ? (
         <main className="mx-auto flex min-h-[60vh] max-w-[640px] items-center justify-center px-6">
           <p className="text-sm text-[var(--gray-text)]">Loading board...</p>
         </main>
       ) : (
-        <div className="lg:flex lg:items-start lg:gap-4">
-          <div className="min-w-0 flex-1">
-            <KanbanBoard board={board} onBoardChange={boardSync.updateBoard} />
-          </div>
-          <AIChatSidebar
-            messages={chatMessages}
-            onSend={handleSendChat}
-            isSending={isChatSending}
-            error={chatError}
-          />
-        </div>
+        <BoardWorkspace key={activeBoardId} boardId={activeBoardId} />
       )}
     </>
   );

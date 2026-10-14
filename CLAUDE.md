@@ -32,17 +32,17 @@ Single container: the Next.js app is built as a static export (`output: "export"
 
 Backend (`backend/app/`):
 
-- `main.py` -- all routes, Pydantic request/response models, and auth. Auth is a fake fixed login (`user`/`password`) issuing an HMAC-signed, expiring httpOnly `pm_session` cookie; `SESSION_SECRET` is required (startup fails without it). Board/AI routes depend on `_require_authenticated_user`. On startup it initializes the DB and ensures the demo user and its board exist.
+- `main.py` -- all routes, Pydantic request/response models, and auth. Auth is DB-backed (register/login/change-password/delete-account; scrypt hashes; demo user `user`/`password` is seeded at startup) issuing an HMAC-signed, expiring httpOnly `pm_session` cookie; `SESSION_SECRET` is required (startup fails without it). Board/AI routes depend on `_require_authenticated_user`, which returns the user id. On startup it initializes the DB and ensures the demo user and its board exist.
 - `BoardModel` enforces board consistency (every `cardIds` entry exists in `cards`, each card in exactly one column, keys match ids), and `_require_fixed_columns` rejects any change to the column id list. Both apply to `PUT /api/board` (422) and AI updates (502).
-- `db.py` -- raw `sqlite3`. Each user has exactly one board stored as a JSON snapshot with an integer `version`; `save_board_snapshot` does optimistic concurrency atomically (`UPDATE ... WHERE version = ?`) with a required `expected_version` (mismatch raises `ValueError`, mapped to HTTP 409).
+- `db.py` -- raw `sqlite3`. Each user has any number of named boards, each stored as a JSON snapshot with an integer `version`; `save_board_snapshot` does optimistic concurrency atomically (`UPDATE ... WHERE version = ?`) with a required `expected_version` (mismatch raises `ValueError`, mapped to HTTP 409).
 - `ai.py` -- OpenAI Responses API client (`OPENAI_API_KEY`, `AI_MODEL`). `run_kanban_assistant` sends the current board JSON, chat history and user message using a strict JSON-schema structured output `{assistant_message, board_update}`, where `board_update` is a full replacement board or null. The AI contract represents `cards` as an array (strict mode cannot express maps); `_board_to_ai`/`_board_from_ai` convert to and from the stored map shape. `/api/ai/chat` validates this against the same Pydantic board models before saving; invalid AI output must never mutate the board.
 
 Frontend (`frontend/src/`):
 
 - `lib/kanban.ts` -- the `BoardData` shape (`columns[]` with ordered `cardIds`, plus a `cards` map by id) and move logic. This shape must stay in sync with `BoardModel` in `backend/app/main.py` and with what the AI is told to return.
 - `lib/api.ts` -- all `fetch` calls, typed; non-2xx responses throw `ApiError` with the status.
-- `hooks/useBoardSync.ts` -- owns the board and its server `version`. Saves are sent one at a time; edits made while a save is in flight are coalesced and sent with the version the previous save returned. A 409 reloads the server board.
-- `components/AuthenticatedHome.tsx` -- session check, login/logout and AI chat state; composes `LoginForm`, `KanbanBoard` and `AIChatSidebar`.
+- `hooks/useBoardSync.ts` -- takes a `boardId`, owns that board and its server `version`. Saves are sent one at a time; edits made while a save is in flight are coalesced and sent with the version the previous save returned. A 409 reloads the server board.
+- `components/AuthenticatedHome.tsx` -- session check, login/register/logout and the board list; composes `LoginForm`, `BoardSwitcher` and `BoardWorkspace` (keyed by board id, owns that board's sync and AI chat state).
 - E2E tests run against `next dev` with the backend faked via `page.route()` in `tests/fakeBackend.ts`, which enforces `expected_version` and delays saves so overlapping saves surface as conflicts.
 
 Backend tests use FastAPI `TestClient` and isolate the DB by monkeypatching `main.DB_PATH` to a `tmp_path` file; AI calls are mocked by default.

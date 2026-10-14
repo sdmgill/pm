@@ -61,7 +61,7 @@ export const AIChatSidebar = ({
         className={[
           "fixed right-0 top-0 z-30 h-screen w-full max-w-[380px] border-l border-[var(--stroke)] bg-white/95 shadow-[var(--shadow)] backdrop-blur transition-transform duration-200",
           isOpen ? "translate-x-0" : "translate-x-full",
-          "lg:sticky lg:top-[82px] lg:z-10 lg:mr-4 lg:mt-12 lg:h-[calc(100vh-110px)] lg:w-[360px] lg:max-w-none lg:flex-shrink-0 lg:translate-x-0 lg:rounded-[28px] lg:border lg:bg-white lg:shadow-[var(--shadow)]",
+          "lg:sticky lg:top-[82px] lg:z-10 lg:mr-4 lg:mt-6 lg:h-[calc(100vh-110px)] lg:w-[300px] lg:max-w-none lg:flex-shrink-0 lg:translate-x-0 lg:rounded-[28px] lg:border lg:bg-white lg:shadow-[var(--shadow)]",
         ].join(" ")}
       >
         <div className="flex h-full flex-col">

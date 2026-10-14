@@ -8,6 +8,8 @@ const jsonResponse = (body: unknown, status = 200) =>
   ({ ok: status < 400, status, json: async () => body }) as Response;
 
 const snapshot = (board: BoardData, version: number) => ({
+  id: 1,
+  name: "My Board",
   board,
   version,
   updated_at: "2026-10-13T00:00:00",
@@ -37,7 +39,7 @@ describe("useBoardSync", () => {
       .mockResolvedValueOnce(jsonResponse(snapshot(withTitle("Pla"), 3)));
     global.fetch = fetchMock as unknown as typeof fetch;
 
-    const { result } = renderHook(() => useBoardSync());
+    const { result } = renderHook(() => useBoardSync(1));
     await act(() => result.current.reload());
 
     act(() => {
@@ -70,7 +72,7 @@ describe("useBoardSync", () => {
       .mockResolvedValueOnce(jsonResponse(snapshot(serverBoard, 5)));
     global.fetch = fetchMock as unknown as typeof fetch;
 
-    const { result } = renderHook(() => useBoardSync());
+    const { result } = renderHook(() => useBoardSync(1));
     await act(() => result.current.reload());
 
     act(() => {
@@ -88,7 +90,7 @@ describe("useBoardSync", () => {
       .mockResolvedValueOnce(jsonResponse({ detail: "boom" }, 500));
     global.fetch = fetchMock as unknown as typeof fetch;
 
-    const { result } = renderHook(() => useBoardSync());
+    const { result } = renderHook(() => useBoardSync(1));
     await act(() => result.current.reload());
 
     act(() => {
